@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 HINDSIGHT_BASE_URL = os.environ.get("HINDSIGHT_BASE_URL", "http://localhost:8888")
-HINDSIGHT_BANK_ID = os.environ.get("HINDSIGHT_BANK_ID", "openclaw-log")
+HINDSIGHT_BANK_ID = os.environ.get("HINDSIGHT_BANK_ID", "stateful-agent")
 HINDSIGHT_ENABLED = os.environ.get("HINDSIGHT_ENABLED", "true").lower() in ("true", "1", "yes")
 # User ID tag for Hindsight memory (e.g. user:your_id_here). Used when retaining.
 HINDSIGHT_USER_ID = os.environ.get("HINDSIGHT_USER_ID", "").strip()

@@ -555,7 +555,7 @@ The agent has 50+ tools organized by category:
 | `CONTEXT_WINDOW_TOKENS` | — | `200000` | Max history tokens per turn |
 | `RECENT_MESSAGES_LIMIT` | — | `30` | Recent messages kept in context |
 | `HINDSIGHT_BASE_URL` | — | `http://localhost:8888` | Hindsight server URL |
-| `HINDSIGHT_BANK_ID` | — | `openclaw-log` | Memory bank identifier |
+| `HINDSIGHT_BANK_ID` | — | `stateful-agent` | Memory bank identifier |
 | `HINDSIGHT_ENABLED` | — | `true` | Enable/disable Hindsight |
 | `DISCORD_BOT_TOKEN` | — | — | Discord bot token |
 | `DISCORD_CHANNEL_ID` | — | — | Discord channel/DM ID to listen on |
@@ -598,17 +598,21 @@ Set `ANTHROPIC_API_KEY` — support requires modifying `build_agent()` in `graph
 
 ### Setting Up Core Memory
 
-The agent starts with empty memory blocks. To pre-populate them:
+The agent starts with empty memory blocks. Example template files are provided in [`examples/memory/`](examples/memory/) — start there.
 
-1. Create text files for each block:
+**The most important file is `NEWSYSINSTRUCT.txt`** (system instructions). It shapes the agent's personality, privacy rules, and behavioral guidelines. Read [`examples/memory/README.md`](examples/memory/README.md) for a full guide on customizing it.
+
+To pre-populate memory:
+
+1. Edit the files in `examples/memory/` (or create your own):
+   - `NEWSYSINSTRUCT.txt` — system instructions (read-only; the agent can't edit these) ← **customize this first**
    - `IDENTITY.txt` — who the agent is, its personality and values
    - `USER.txt` — information about you
    - `IDEASPACE.txt` — starting thoughts, ongoing projects
-   - `NEWSYSINSTRUCT.txt` — system instructions (read-only; the agent can't edit these)
 
 2. Import them:
    ```bash
-   python scripts/import_core_memory.py --path /path/to/your/memory/files
+   python scripts/import_core_memory.py --path examples/memory
    ```
 
 Or edit directly via the dashboard Memory tab after starting.

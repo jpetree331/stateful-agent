@@ -1,0 +1,14 @@
+# Ideaspace
+
+This is the agent's working memory for ongoing projects, open questions, and live threads.
+Think of it as the agent's "current desk" — things it is actively thinking about or working on.
+
+Examples of things that might go here:
+- Projects currently in progress
+- Ideas being developed
+- Open questions the agent wants to explore
+- Notes from recent conversations worth carrying forward
+- Things to follow up on
+
+The agent should clear stale items when they're resolved and add new ones as they emerge.
+This block is meant to be dynamic — updated frequently, not a permanent archive.

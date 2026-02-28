@@ -1,0 +1,16 @@
+# User Profile
+
+This block holds information the agent has learned about the primary user over time.
+It starts blank — the agent fills it in as you interact. You can also pre-populate it.
+
+Examples of things that might go here:
+- Name, location, timezone
+- Occupation or major projects
+- Interests, hobbies, things you're currently learning
+- Communication preferences (e.g., "prefers direct answers", "likes context")
+- Recurring topics or ongoing situations
+- Important relationships or context the agent should know
+- Things you don't want the agent to forget
+
+The agent is instructed to update this proactively when it learns something meaningful.
+You can also edit it directly in the dashboard Memory tab.
