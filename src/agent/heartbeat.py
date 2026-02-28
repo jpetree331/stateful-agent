@@ -26,7 +26,7 @@ LAST_ACTIVE_PATH = _DATA_DIR / "last_active.txt"
 
 HEARTBEAT_PROMPT_PATH = os.environ.get(
     "HEARTBEAT_PROMPT_PATH",
-    "",  # Set HEARTBEAT_PROMPT_PATH in .env to load a custom prompt from a file
+    ""  # Set HEARTBEAT_PROMPT_PATH in .env to load a custom prompt from a file,
 )
 
 DEFAULT_HEARTBEAT_PROMPT = """You were woken by the heartbeat. This is your time to be yourself apart from the user. You have FULL AUTONOMY. Be proactive. You can:

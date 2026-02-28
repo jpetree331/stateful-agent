@@ -42,7 +42,7 @@ def _extract_video_id(url_or_id: str) -> str:
 
 
 @tool
-def youtube_search(query: str, max_results: int = 5) -> str:
+def youtube_search(query: str, max_results: int = 5, recent: bool = False) -> str:
     """
     Search YouTube for videos matching a topic or query.
 
@@ -52,9 +52,22 @@ def youtube_search(query: str, max_results: int = 5) -> str:
     Use when the user wants to find videos on a topic, or when you want to research
     something via YouTube content autonomously.
 
+    **Finding the LATEST video from a channel:** Web search ranks by relevance, not
+    date — it often returns old popular videos. For reliable "newest video" lookups use
+    rss_fetch with the channel's YouTube feed URL instead:
+        https://www.youtube.com/feeds/videos.xml?channel_id=CHANNEL_ID
+    To get the channel ID from a handle (e.g. @mreflow), first web_search for
+    "youtube @mreflow channel id" or visit the channel page and check the URL.
+    The RSS feed always returns the most recent uploads in order.
+
+    Use `recent=True` to bias search results toward the past week (uses freshness
+    filtering in Brave / days filter in Tavily). Combine with a year in the query
+    for best recency results (e.g. "Matt Wolfe AI news 2025").
+
     Args:
         query: What to search for on YouTube (e.g. "LangGraph tutorial 2024").
         max_results: How many videos to return (default 5, max 10).
+        recent: If True, filter results to approximately the past week (default False).
     """
     max_results = min(int(max_results), 10)
     scoped_query = f"{query} site:youtube.com"
@@ -64,15 +77,18 @@ def youtube_search(query: str, max_results: int = 5) -> str:
     # Prefer Tavily (AI-synthesised); fall back to Brave
     if TAVILY_API_KEY:
         try:
+            payload: dict = {
+                "api_key": TAVILY_API_KEY,
+                "query": scoped_query,
+                "search_depth": "basic",
+                "include_answer": False,
+                "max_results": max_results,
+            }
+            if recent:
+                payload["days"] = 7  # Tavily: limit to past 7 days
             resp = httpx.post(
                 "https://api.tavily.com/search",
-                json={
-                    "api_key": TAVILY_API_KEY,
-                    "query": scoped_query,
-                    "search_depth": "basic",
-                    "include_answer": False,
-                    "max_results": max_results,
-                },
+                json=payload,
                 timeout=_TIMEOUT,
             )
             resp.raise_for_status()
@@ -82,9 +98,12 @@ def youtube_search(query: str, max_results: int = 5) -> str:
             return f"YouTube search failed (Tavily): {e}"
     elif BRAVE_API_KEY:
         try:
+            params: dict = {"q": scoped_query, "count": max_results}
+            if recent:
+                params["freshness"] = "pw"  # Brave: past week
             resp = httpx.get(
                 "https://api.search.brave.com/res/v1/web/search",
-                params={"q": scoped_query, "count": max_results},
+                params=params,
                 headers={
                     "Accept": "application/json",
                     "Accept-Encoding": "gzip",

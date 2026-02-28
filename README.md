@@ -156,7 +156,7 @@ The agent uses PostgreSQL for conversation history, core memory, cron jobs, and 
 4. Paste it into your `.env` as `DATABASE_URL`
 
 ```bash
-DATABASE_URL=postgresql://postgres:PASSWORD@shinkansen.proxy.rlwy.net:30278/railway
+DATABASE_URL=postgresql://postgres:PASSWORD@HOST:PORT/railway
 ```
 
 ### Step 4: Verify the Connection
