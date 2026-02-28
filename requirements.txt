@@ -1,0 +1,52 @@
+# LangGraph & LangChain
+langgraph>=1.0
+langgraph-checkpoint-sqlite>=3.0
+langchain>=0.3
+langchain-core>=0.3
+
+# LLM providers (pick one or more)
+langchain-openai>=0.2
+langchain-anthropic>=0.2
+
+# Postgres (conversation history, Railway)
+psycopg[binary]>=3.1
+
+# Env loading
+python-dotenv>=1.0
+
+# For local embeddings (long-term memory, later)
+# langchain-community  # optional
+
+# Hindsight agent memory (retain, recall, reflect)
+hindsight-client>=0.4
+
+# Scheduler for heartbeat (optional; alternative to Windows Task Scheduler)
+APScheduler>=3.10
+
+# API server for dashboard (local testing)
+fastapi>=0.115
+uvicorn>=0.32
+
+# HTTP client for web search tools (Brave, Exa, Tavily, weather)
+httpx>=0.27
+
+# Discord bot integration (Gateway WebSocket, online presence)
+discord.py>=2.3
+
+# Windows toast notifications (properly registers AUMID via Start Menu shortcut)
+winotify>=1.1
+
+# Document reading
+pypdf>=4.0
+
+# YouTube transcript fetching (no API key needed)
+youtube-transcript-api>=0.6
+
+# RSS/Atom feed reader (no API key needed)
+feedparser>=6.0
+
+# Clipboard read/write (optional; enable with CLIPBOARD_ENABLED=true in .env)
+pyperclip>=1.8
+
+# Screenshot capture (analyze_screenshot tool)
+Pillow>=10.0

@@ -1,0 +1,44 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env & secrets (API keys, credentials)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+*.key
+*.pem
+credentials.json
+service-account*.json
+secrets/
+
+# Data (checkpoints, etc.)
+data/
+!data/.gitkeep
+
+# Logs (keep directory structure)
+logs/
+!logs/.gitkeep
+!logs/cron/.gitkeep
+
+# Node (dashboard)
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+
+# Personal / local files
+.obsidian/
+
+# Windows reserved names
+nul
+con
+prn
+aux
