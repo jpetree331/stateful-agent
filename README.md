@@ -14,6 +14,7 @@ Designed as an open, hackable alternative to Letta/OpenClaw. Built for people wh
 - **Manages scheduled tasks** — Full cron job system with a dashboard UI
 - **Communicates proactively** — Discord Gateway + Telegram long-poll so it's always listening
 - **Runs on your PC** — File access, clipboard, screenshot analysis, Windows notifications
+- **In-game overlay** — Always-on-top chat + screenshot capture for gaming (Electron)
 - **Searches the web** — Brave/Tavily search, Wikipedia, YouTube transcripts, RSS feeds
 
 ---
@@ -28,14 +29,15 @@ Designed as an open, hackable alternative to Letta/OpenClaw. Built for people wh
 6. [Hindsight Memory Setup](#hindsight-memory-setup)
 7. [Running the Agent](#running-the-agent)
 8. [Dashboard (Web UI)](#dashboard-web-ui)
-9. [Heartbeat / Autonomous Mode](#heartbeat--autonomous-mode)
-10. [Discord Integration](#discord-integration)
-11. [Telegram Integration](#telegram-integration)
-12. [Memory Architecture](#memory-architecture)
-13. [Tool Reference](#tool-reference)
-14. [Environment Variables Reference](#environment-variables-reference)
-15. [Advanced Configuration](#advanced-configuration)
-16. [Troubleshooting](#troubleshooting)
+9. [In-Game Overlay](#in-game-overlay)
+10. [Heartbeat / Autonomous Mode](#heartbeat--autonomous-mode)
+11. [Discord Integration](#discord-integration)
+12. [Telegram Integration](#telegram-integration)
+13. [Memory Architecture](#memory-architecture)
+14. [Tool Reference](#tool-reference)
+15. [Environment Variables Reference](#environment-variables-reference)
+16. [Advanced Configuration](#advanced-configuration)
+17. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -369,6 +371,63 @@ The dashboard provides:
 
 ---
 
+## In-Game Overlay
+
+The **electron-overlay** is an always-on-top chat window that floats above games (or any fullscreen app). Chat with your agent without alt-tabbing — and send screenshots of your screen for vision analysis.
+
+### What It Does
+
+- **Always-on-top chat** — Transparent overlay in the corner; stays above fullscreen games
+- **In-game screenshots** — Capture the screen with a hotkey, attach to a message, and the agent analyzes it with vision AI
+- **Click-through mode** — When enabled, mouse clicks pass through to the game (e.g. WoW); toggle off to type
+- **Opacity control** — Adjust transparency so the overlay doesn't block the view
+
+### Requirements
+
+- The **API server** must be running (`python -m src.agent.api`)
+- Node.js 18+ (for the Electron app)
+- A vision-capable model configured (see [Screenshot / Vision](#screenshot--vision) in Environment Variables)
+
+### How to Run
+
+```bash
+# Terminal 1: Start the API server (required)
+python -m src.agent.api
+
+# Terminal 2: Start the overlay
+cd electron-overlay
+npm install   # first time only
+npm run electron-dev   # dev mode (Vite + Electron)
+# Or: npm run build && npm start   # production
+```
+
+The overlay opens in the bottom-right corner. It connects to `http://localhost:8000` and shares the same `thread_id="main"` as the dashboard, so conversation history is unified.
+
+### Hotkeys
+
+| Hotkey | Action |
+|--------|--------|
+| **Ctrl+Shift+R** | Show/hide overlay |
+| **Ctrl+Shift+S** | Capture screenshot and open overlay (attach to next message) |
+
+### Controls (gear icon)
+
+- **Opacity** — Slider to adjust overlay transparency
+- **Click-through** — Toggle so clicks pass through to the game (useful when playing)
+- **Clear display** — Clears the chat display (history stays in the agent)
+
+### Screenshot Flow
+
+1. Press **Ctrl+Shift+S** (or click the camera button) to capture the screen
+2. The overlay briefly hides so it doesn't appear in the screenshot
+3. A thumbnail appears in the input area — add a message or send as-is
+4. The image is sent to `/analyze-screenshot`; the vision model describes what it sees
+5. That description is passed to the agent as context; the agent replies in chat
+
+You can tune screenshot resolution and quality in `.env` (see [Screenshot / Vision](#screenshot--vision)) without touching code.
+
+---
+
 ## Heartbeat / Autonomous Mode
 
 The agent can wake up on a schedule for autonomous work — checking feeds, reflecting on memories, drafting messages, or whatever you instruct it to do.
@@ -567,6 +626,11 @@ The agent has 50+ tools organized by category:
 | `AGENT_TRASH_FOLDER` | — | `~/Desktop/Agent_Trash` | Soft-delete folder for moved files |
 | `CLIPBOARD_ENABLED` | — | `false` | Enable clipboard read/write tools |
 | `BRAVE_API_KEY` | — | — | Brave Search API key (for `web_search`) |
+| `VISION_MODEL_NAME` | — | same as `OPENAI_MODEL_NAME` | Vision model for screenshots (e.g. `gpt-4o-mini`) |
+| `VISION_BASE_URL` | — | same as `OPENAI_BASE_URL` | Vision endpoint (if different from main LLM) |
+| `VISION_MAX_WIDTH` | — | `1024` | Max screenshot width for vision (smaller = faster) |
+| `VISION_MAX_HEIGHT` | — | `768` | Max screenshot height for vision |
+| `VISION_JPEG_QUALITY` | — | `75` | JPEG quality 1–95 (lower = smaller, faster) |
 | `LANGCHAIN_TRACING_V2` | — | `false` | Enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | — | — | LangSmith API key |
 | `CORS_ORIGINS` | — | — | Extra allowed origins for dashboard CORS |
@@ -621,6 +685,18 @@ Or edit directly via the dashboard Memory tab after starting.
 
 ```bash
 python scripts/import_letta_backup.py /path/to/backup.json --thread main
+```
+
+### Screenshot / Vision
+
+The `analyze_screenshot` tool and the in-game overlay send screenshots to a vision model. If your main model doesn't support vision, set `VISION_MODEL_NAME` to one that does (e.g. `gpt-4o-mini`).
+
+You can tune resolution and quality in `.env` without touching code — useful if vision calls are slow:
+
+```bash
+VISION_MAX_WIDTH=800      # go even smaller if still slow
+VISION_MAX_HEIGHT=600
+VISION_JPEG_QUALITY=70
 ```
 
 ### Changing the Agent's Name / Notification App Name
