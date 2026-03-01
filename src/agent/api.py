@@ -6,12 +6,34 @@ Then open http://localhost:5173 (Vite dev server) or point the dashboard at http
 """
 from __future__ import annotations
 
+import logging
 import os
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Configure logging — writes to console AND a rotating file at data/api.log
+import logging.handlers
+from pathlib import Path
+
+_LOG_DIR = Path(__file__).resolve().parents[2] / "data"
+_LOG_DIR.mkdir(exist_ok=True)
+_LOG_FILE = _LOG_DIR / "api.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            _LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        ),
+    ],
+)
+logger = logging.getLogger("rowan.api")
 
 from .core_memory import get_all_blocks, update_block, update_system_instructions
 from .cron_jobs import (
@@ -97,6 +119,8 @@ class CoreMemoryResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 def post_chat(req: ChatRequest):
     """Handle a chat message and return the assistant response."""
+    preview = req.message[:120].replace("\n", " ")
+    logger.info("POST /chat thread=%s channel=%s msg=%r", req.thread_id, req.channel_type, preview)
     try:
         result = chat(
             app.state.agent,
@@ -108,10 +132,13 @@ def post_chat(req: ChatRequest):
             is_group_chat=req.is_group_chat,
         )
     except RuntimeError as e:
+        logger.error("POST /chat RuntimeError: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        logger.error("POST /chat unhandled exception:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Agent error: {e}")
     last = _get_last_ai_content(result["messages"])
+    logger.info("POST /chat → response length=%d chars", len(last or ""))
     return ChatResponse(response=last or "")
 
 
@@ -432,6 +459,95 @@ def get_messages(thread_id: str = "main", limit: int = 200):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class AnalyzeScreenshotRequest(BaseModel):
+    image_data_url: str  # full data URL: "data:image/png;base64,..."
+    prompt: str = "Describe in detail what you see on the screen. Note any text, UI elements, open applications, and anything important."
+
+
+class AnalyzeScreenshotResponse(BaseModel):
+    description: str
+
+
+@app.post("/analyze-screenshot", response_model=AnalyzeScreenshotResponse)
+def analyze_screenshot_endpoint(req: AnalyzeScreenshotRequest):
+    """
+    Accept a base64-encoded screenshot from the overlay, run it through the
+    vision model (resized), and return a plain-text description.
+
+    The overlay sends that description as a normal chat message, keeping image
+    bytes out of the main agent context window entirely.
+    """
+    import base64
+    import io
+
+    vision_model = (
+        os.environ.get("VISION_MODEL_NAME")
+        or os.environ.get("OPENAI_MODEL_NAME")
+        or "gpt-4o-mini"
+    )
+    vision_base_url = os.environ.get("VISION_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "(default OpenAI)"
+    logger.info(
+        "POST /analyze-screenshot prompt=%r  model=%s  base_url=%s",
+        req.prompt[:80],
+        vision_model,
+        vision_base_url,
+    )
+
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.error("/analyze-screenshot: Pillow not installed")
+        raise HTTPException(status_code=500, detail="Pillow not installed on server. Run: pip install Pillow")
+
+    # Strip the data URL prefix to get raw base64
+    try:
+        _header, b64_data = req.image_data_url.split(",", 1)
+    except ValueError:
+        logger.error("/analyze-screenshot: malformed image_data_url (no comma separator)")
+        raise HTTPException(status_code=400, detail="image_data_url must be a valid data URL (data:image/...;base64,...)")
+
+    try:
+        img_bytes = base64.b64decode(b64_data)
+        img = Image.open(io.BytesIO(img_bytes))
+        logger.info("/analyze-screenshot: decoded image size=%s mode=%s", img.size, img.mode)
+    except Exception as e:
+        logger.error("/analyze-screenshot: image decode failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
+
+    # Reuse the same resize + vision logic from screenshot_tools
+    from .screenshot_tools import _resize_for_vision, _image_to_base64, _call_vision
+
+    img = _resize_for_vision(img)
+    logger.info("/analyze-screenshot: resized to %s, encoding to base64", img.size)
+    b64 = _image_to_base64(img)
+    logger.info("/analyze-screenshot: base64 length=%d chars, calling vision model", len(b64))
+
+    try:
+        description = _call_vision(b64, req.prompt)
+        logger.info("/analyze-screenshot: vision succeeded, response length=%d chars", len(description))
+    except Exception as e:
+        full_tb = traceback.format_exc()
+        logger.error(
+            "/analyze-screenshot: vision call FAILED\n"
+            "  model=%s\n  base_url=%s\n  error=%s\n%s",
+            vision_model,
+            vision_base_url,
+            e,
+            full_tb,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Vision analysis failed: {e}\n"
+                f"Model: {vision_model} | Base URL: {vision_base_url}\n"
+                f"Check data/api.log for the full traceback.\n"
+                f"Tip: set VISION_BASE_URL in .env if your vision model uses a different endpoint than your main model."
+            ),
+        )
+
+    return AnalyzeScreenshotResponse(description=description)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,41 @@
+{
+  "name": "agent-overlay",
+  "version": "1.0.0",
+  "description": "Always-on-top overlay for chatting with your agent while gaming",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "vite",
+    "build": "vite build",
+    "electron-dev": "concurrently \"vite\" \"wait-on http://localhost:5174 && electron .\"",
+    "dist": "vite build && electron-builder"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "tailwindcss": "^3.4.17",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.1",
+    "vite": "^6.0.11",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.agent.overlay",
+    "productName": "Agent Overlay",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js"
+    ]
+  }
+}

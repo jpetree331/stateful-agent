@@ -26,11 +26,17 @@ from langchain_core.tools import tool
 
 _SCREENSHOT_DIR = Path(__file__).resolve().parents[2] / "data" / "screenshots"
 
-# Max dimension for screenshot sent to vision model.
-# Full 4K screenshots (~35 MB PNG) are unnecessarily large for analysis.
-# 1920-wide is plenty of detail for most tasks while keeping token cost low.
-_MAX_WIDTH = 1920
-_MAX_HEIGHT = 1200
+# Max dimensions for the vision model.
+# Configurable via env vars so you can tune without code changes.
+# Defaults are conservative for ultrawide monitors (3440×1440 → ~1024×430).
+# Vision models don't need pixel-perfect resolution — 1024px wide is plenty for
+# reading text and identifying UI elements.
+_MAX_WIDTH = int(os.environ.get("VISION_MAX_WIDTH", "1024"))
+_MAX_HEIGHT = int(os.environ.get("VISION_MAX_HEIGHT", "768"))
+
+# JPEG quality for vision encoding (1-95). PNG is lossless but 5-10x larger.
+# 75 is visually identical to the original for vision analysis purposes.
+_JPEG_QUALITY = int(os.environ.get("VISION_JPEG_QUALITY", "75"))
 
 
 def _capture_screenshot() -> "PIL.Image.Image":  # type: ignore[name-defined]
@@ -50,10 +56,18 @@ def _resize_for_vision(img: "PIL.Image.Image") -> "PIL.Image.Image":  # type: ig
 
 
 def _image_to_base64(img: "PIL.Image.Image") -> str:  # type: ignore[name-defined]
-    """Encode a PIL image to base64 PNG string."""
+    """Encode a PIL image to base64 JPEG string (much smaller than PNG, fine for vision)."""
+    # Convert RGBA/P modes to RGB — JPEG doesn't support transparency
+    if img.mode in ("RGBA", "P", "LA"):
+        img = img.convert("RGB")
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _image_to_base64_data_url(img: "PIL.Image.Image") -> str:
+    """Return a full data URL (data:image/jpeg;base64,...) for inline use."""
+    return f"data:image/jpeg;base64,{_image_to_base64(img)}"
 
 
 def _call_vision(b64_image: str, prompt: str) -> str:
@@ -77,7 +91,7 @@ def _call_vision(b64_image: str, prompt: str) -> str:
 
     message = HumanMessage(content=[
         {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}},
     ])
     response = llm.invoke([message])
     return str(response.content)

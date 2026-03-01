@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar — thin and dark for the overlay */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.5);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+/* Prevent text selection on drag handles */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Electron drag region */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Markdown in messages */
+.prose-overlay p { margin: 0.2rem 0; }
+.prose-overlay p:first-child { margin-top: 0; }
+.prose-overlay p:last-child { margin-bottom: 0; }
+.prose-overlay ul { margin: 0.3rem 0; padding-left: 1.2rem; list-style: disc; }
+.prose-overlay ol { margin: 0.3rem 0; padding-left: 1.2rem; list-style: decimal; }
+.prose-overlay li { margin: 0.15rem 0; }
+.prose-overlay strong { font-weight: 600; }
+.prose-overlay code {
+  background: rgba(0,0,0,0.3);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.8em;
+  font-family: monospace;
+}
+.prose-overlay pre {
+  background: rgba(0,0,0,0.4);
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.3rem 0;
+}
+.prose-overlay pre code {
+  background: none;
+  padding: 0;
+}
