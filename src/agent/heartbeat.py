@@ -42,6 +42,29 @@ You are encouraged to be proactive. Act on your own initiative. This is your tim
 If you have nothing to report or share this round, reply HEARTBEAT_OK."""
 
 
+def _count_today_heartbeats() -> int:
+    """Count heartbeat user messages stored today (in agent timezone)."""
+    from .db import get_connection
+    from .graph import AGENT_TIMEZONE
+    today_str = datetime.now(AGENT_TIMEZONE).date().isoformat()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS cnt FROM messages
+                    WHERE role = 'user'
+                      AND metadata->>'role_display' = 'heartbeat'
+                      AND metadata->>'date_est' = %s
+                    """,
+                    (today_str,),
+                )
+                row = cur.fetchone()
+                return int(row["cnt"]) if row else 0
+    except Exception:
+        return 0  # On any DB error, treat as first heartbeat of the day
+
+
 def load_heartbeat_prompt() -> str:
     """Load heartbeat prompt from file, or use default."""
     path = Path(HEARTBEAT_PROMPT_PATH)
@@ -100,11 +123,18 @@ def run_heartbeat(
     prompt = load_heartbeat_prompt()
     agent = build_agent()
 
+    # First heartbeat of the day: store the full prompt so there's a record of instructions.
+    # Subsequent heartbeats: store only "HEARTBEAT" — the LLM still receives the full prompt
+    # for its reasoning, but the DB stays lean and context windows stay clean.
+    today_count = _count_today_heartbeats()
+    stored_message = None if today_count == 0 else "HEARTBEAT"
+
     config = {"configurable": {"thread_id": thread_id}}
     result = chat(
         agent,
         thread_id,
         prompt,
+        stored_message=stored_message,
         user_display_name=user_display_name,
         config=config,
         current_time=current_time,

@@ -206,6 +206,7 @@ def load_messages(
     max_tokens: int | None = None,
     include_metadata: bool = True,
     exclude_tool_messages: bool = True,
+    exclude_heartbeat: bool = False,
 ) -> list[dict]:
     """
     Load conversation history for a thread.
@@ -217,6 +218,9 @@ def load_messages(
     - The effective window starts at whichever boundary is earlier — so a busy day
       never drops same-day context, and a quiet day still has at least `limit` messages.
     - `max_tokens`: final token-count safety cap (applied after the window).
+    - `exclude_heartbeat`: if True, heartbeat user messages AND their assistant responses
+      are excluded — both carry metadata role_display='heartbeat'. Use this for regular
+      chat context; the daily summary captures what happened during heartbeats instead.
 
     Tool messages are excluded by default — they are noisy, expensive, and not
     useful for recent context (they were tool call returns, not conversation).
@@ -224,7 +228,14 @@ def load_messages(
     Returns list of dicts with: role, content, reasoning (optional), created_at, metadata.
     Ordered by idx ascending.
     """
-    role_filter = "AND role != 'tool'" if exclude_tool_messages else ""
+    filters = []
+    if exclude_tool_messages:
+        filters.append("role != 'tool'")
+    if exclude_heartbeat:
+        filters.append(
+            "(metadata->>'role_display' IS NULL OR metadata->>'role_display' != 'heartbeat')"
+        )
+    role_filter = ("AND " + " AND ".join(filters)) if filters else ""
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(

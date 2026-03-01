@@ -419,6 +419,7 @@ def chat(
     thread_id: str,
     user_message: str,
     *,
+    stored_message: str | None = None,
     user_display_name: str | None = None,
     config: dict | None = None,
     current_time: datetime | None = None,
@@ -434,7 +435,9 @@ def chat(
     Args:
         agent: The ReAct agent from build_agent()
         thread_id: Conversation thread identifier
-        user_message: The user's message
+        user_message: The message sent to the LLM (full content)
+        stored_message: If provided, stored in DB instead of user_message (e.g. abbreviated
+                        heartbeat marker). The LLM still receives the full user_message.
         user_display_name: Optional display name for the user
         config: Optional LangGraph config
         current_time: Optional datetime for time awareness (defaults to now in AGENT_TIMEZONE)
@@ -466,6 +469,7 @@ def chat(
         limit=RECENT_MESSAGES_LIMIT,
         since=today_midnight,
         max_tokens=CONTEXT_WINDOW_TOKENS,
+        exclude_heartbeat=True,
     )
     history = _db_to_langchain(rows)
 
@@ -511,11 +515,16 @@ def chat(
         raise
 
     # Persist new messages (3-tuple: role, content, metadata; reasoning=None for live chat)
+    # stored_message lets callers save an abbreviated version (e.g. "HEARTBEAT") while the
+    # LLM still received the full user_message above.
+    # Heartbeat assistant responses are tagged role_display="heartbeat" so load_messages()
+    # can exclude both sides of the pair from regular conversation context.
     to_persist: list[tuple[str, str, dict | None, str | None]] = []
-    to_persist.append(("user", user_message, None, None))
+    to_persist.append(("user", stored_message or user_message, None, None))
     last_ai = _get_last_ai_content(result["messages"])
     if last_ai:
-        to_persist.append(("assistant", last_ai, None, None))
+        hb_meta = {"role_display": "heartbeat"} if user_display_name == "heartbeat" else None
+        to_persist.append(("assistant", last_ai, hb_meta, None))
 
     append_messages(
         thread_id,
