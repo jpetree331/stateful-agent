@@ -1038,7 +1038,7 @@ function ChatTab() {
     }
   }
 
-  const visibleMessages = messages.filter((m) => m.role !== 'tool')
+  const visibleMessages = messages.filter((m) => m.role !== 'tool' && m.metadata?.role_display !== 'heartbeat')
 
   return (
     <>
