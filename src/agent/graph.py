@@ -19,6 +19,7 @@ import sqlite3
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
+from langchain_openai.chat_models.base import BaseChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.prebuilt import create_react_agent
 
@@ -55,6 +56,46 @@ from .web_search_tools import web_search
 from .wikipedia_tools import wikipedia_lookup
 from .windows_tools import create_shortcut, notify
 from .youtube_tools import youtube_search, youtube_transcript
+
+class ChatKimi(BaseChatOpenAI):
+    """ChatOpenAI-compatible class for Kimi Code endpoint (api.kimi.com/coding/v1).
+
+    Kimi's thinking mode returns `reasoning_content` alongside responses.
+    LangChain's ChatOpenAI intentionally drops non-standard fields, so
+    reasoning_content is lost between tool-call rounds, causing:
+        400 "thinking is enabled but reasoning_content is missing in assistant
+        tool call message"
+
+    This subclass round-trips reasoning_content through additional_kwargs:
+      1. _create_chat_result  → extracts it from the raw response dict.
+      2. _get_request_payload → re-injects it before each API call.
+    """
+
+    def _create_chat_result(self, response, generation_info=None):
+        result = super()._create_chat_result(response, generation_info)
+        response_dict = response if isinstance(response, dict) else response.model_dump()
+        for i, gen in enumerate(result.generations):
+            if not isinstance(gen.message, AIMessage):
+                continue
+            try:
+                rc = response_dict["choices"][i]["message"].get("reasoning_content")
+                if rc:
+                    gen.message.additional_kwargs["reasoning_content"] = rc
+            except (KeyError, IndexError):
+                pass
+        return result
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        messages = self._convert_input(input_).to_messages()
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        if "messages" in payload:
+            for lc_msg, api_msg in zip(messages, payload["messages"]):
+                if isinstance(lc_msg, AIMessage) and api_msg.get("role") == "assistant":
+                    rc = lc_msg.additional_kwargs.get("reasoning_content")
+                    if rc:
+                        api_msg["reasoning_content"] = rc
+        return payload
+
 
 # Letta-style bounded context: last N user+assistant messages (tool messages excluded).
 # Full history stays in PostgreSQL; agent uses conversation_search to reach older turns.
@@ -351,18 +392,16 @@ def build_agent():
     # Kimi Code endpoint enforces a client whitelist via User-Agent.
     # The exact UA comes from the Kimi Code console usage history — it must match
     # a whitelisted client (KimiCLI) to avoid the access_terminated_error 403.
+    # We also use ChatKimi instead of ChatOpenAI to round-trip reasoning_content —
+    # Kimi's thinking mode returns it in responses, but ChatOpenAI drops non-standard
+    # fields, causing 400s on the second tool-call round within a single turn.
     if base_url and "kimi.com/coding" in base_url.lower():
         model_kwargs["default_headers"] = {
             "User-Agent": "KimiCLI/1.13.0 (kimi-agent-sdk/0.1.4 kimi-code-for-vs-code/0.4.3 0.1.4)"
         }
-        # kimi-for-coding has thinking/reasoning mode enabled by default.
-        # When reasoning is on, Kimi includes `reasoning_content` in every response.
-        # LangChain doesn't re-send that field in subsequent API calls (it's non-standard),
-        # so Kimi gets an assistant-tool-call message without reasoning_content and 400s.
-        # Setting budget_tokens=0 disables thinking entirely, preventing the mismatch.
-        model_kwargs["model_kwargs"] = {"thinking": {"budget_tokens": 0}}
-
-    llm = ChatOpenAI(**model_kwargs)
+        llm = ChatKimi(**model_kwargs)
+    else:
+        llm = ChatOpenAI(**model_kwargs)
     checkpointer = get_checkpointer()
 
     agent = create_react_agent(
