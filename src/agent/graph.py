@@ -348,6 +348,14 @@ def build_agent():
             )
         model_kwargs["api_key"] = api_key.strip()
 
+    # Kimi Code endpoint enforces a client whitelist via User-Agent.
+    # The exact UA comes from the Kimi Code console usage history — it must match
+    # a whitelisted client (KimiCLI) to avoid the access_terminated_error 403.
+    if base_url and "kimi.com/coding" in base_url.lower():
+        model_kwargs["default_headers"] = {
+            "User-Agent": "KimiCLI/1.13.0 (kimi-agent-sdk/0.1.4 kimi-code-for-vs-code/0.4.3 0.1.4)"
+        }
+
     llm = ChatOpenAI(**model_kwargs)
     checkpointer = get_checkpointer()
 
