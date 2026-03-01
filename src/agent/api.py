@@ -56,7 +56,7 @@ from .cron_scheduler import (
 )
 from .discord_listener import start_discord_listener, stop_discord_listener
 from .telegram_listener import start_telegram_listener, stop_telegram_listener
-from .db import check_connection, load_messages, setup_schema
+from .db import check_connection, get_connection, load_messages, setup_schema
 from .graph import build_agent, chat, _get_last_ai_content
 
 
@@ -454,6 +454,94 @@ def get_messages(thread_id: str = "main", limit: int = 200):
             for r in rows
         ]
     )
+
+
+class HeartbeatSession(BaseModel):
+    timestamp: str
+    prompt: str
+    response: str | None
+    response_at: str | None
+
+
+class HeartbeatStatusResponse(BaseModel):
+    last_run: str | None
+    interval_minutes: int
+    next_expected: str | None
+    total_runs: int
+
+
+@app.get("/heartbeat/status", response_model=HeartbeatStatusResponse)
+def get_heartbeat_status():
+    """Last heartbeat time, interval, and total run count."""
+    interval = int(os.environ.get("HEARTBEAT_INTERVAL_MINUTES", "60"))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT created_at,
+                       (SELECT COUNT(*) FROM messages
+                        WHERE thread_id = 'main' AND role = 'user'
+                          AND metadata->>'role_display' = 'heartbeat') AS total
+                FROM messages
+                WHERE thread_id = 'main' AND role = 'user'
+                  AND metadata->>'role_display' = 'heartbeat'
+                ORDER BY created_at DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+    if not row:
+        return HeartbeatStatusResponse(
+            last_run=None, interval_minutes=interval,
+            next_expected=None, total_runs=0,
+        )
+    from datetime import timedelta
+    last_run_dt = row["created_at"]
+    next_dt = last_run_dt + timedelta(minutes=interval)
+    return HeartbeatStatusResponse(
+        last_run=last_run_dt.isoformat(),
+        interval_minutes=interval,
+        next_expected=next_dt.isoformat(),
+        total_runs=int(row["total"]),
+    )
+
+
+@app.get("/heartbeat/sessions")
+def get_heartbeat_sessions(limit: int = 50):
+    """Heartbeat session ledger — each prompt paired with the agent's response."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT h.content    AS prompt,
+                       h.created_at AS timestamp,
+                       a.content    AS response,
+                       a.created_at AS response_at
+                FROM messages h
+                LEFT JOIN LATERAL (
+                    SELECT content, created_at FROM messages
+                    WHERE thread_id = h.thread_id
+                      AND role = 'assistant' AND idx > h.idx
+                    ORDER BY idx ASC LIMIT 1
+                ) a ON true
+                WHERE h.thread_id = 'main' AND h.role = 'user'
+                  AND h.metadata->>'role_display' = 'heartbeat'
+                ORDER BY h.created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+    return {
+        "sessions": [
+            HeartbeatSession(
+                timestamp=r["timestamp"].isoformat(),
+                prompt=r["prompt"],
+                response=r["response"],
+                response_at=r["response_at"].isoformat() if r["response_at"] else None,
+            )
+            for r in rows
+        ]
+    }
 
 
 @app.get("/health")

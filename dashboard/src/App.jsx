@@ -1173,12 +1173,151 @@ function ChatTab() {
   )
 }
 
+// ==================== HEARTBEAT TAB ====================
+
+function HeartbeatTab() {
+  const [status, setStatus] = useState(null)
+  const [sessions, setSessions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [expandedPrompts, setExpandedPrompts] = useState({})
+
+  const load = async () => {
+    try {
+      const [sRes, hRes] = await Promise.all([
+        fetch(`${API_BASE}/heartbeat/status`),
+        fetch(`${API_BASE}/heartbeat/sessions?limit=50`),
+      ])
+      if (sRes.ok) setStatus(await sRes.json())
+      if (hRes.ok) { const d = await hRes.json(); setSessions(d.sessions || []) }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  const togglePrompt = (i) => setExpandedPrompts(p => ({ ...p, [i]: !p[i] }))
+
+  const timeAgo = (iso) => {
+    if (!iso) return null
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+    if (m < 1) return 'just now'
+    if (m < 60) return `${m}m ago`
+    const h = Math.floor(m / 60)
+    if (h < 24) return `${h}h ago`
+    return `${Math.floor(h / 24)}d ago`
+  }
+
+  const timeUntil = (iso) => {
+    if (!iso) return '—'
+    const m = Math.ceil((new Date(iso).getTime() - Date.now()) / 60000)
+    if (m <= 0) return 'overdue'
+    if (m < 60) return `in ~${m}m`
+    return `in ~${Math.floor(m / 60)}h ${m % 60}m`
+  }
+
+  const isOk = (r) => r && r.trim() === 'HEARTBEAT_OK'
+
+  // Green if ran within 2× interval, yellow if overdue, grey if never
+  const dotColor = !status?.last_run ? 'bg-slate-600'
+    : (Date.now() - new Date(status.last_run).getTime()) < (status.interval_minutes * 2 * 60000)
+    ? 'bg-emerald-400' : 'bg-yellow-400'
+
+  if (loading) return <div className="p-6 text-slate-400 text-sm">Loading...</div>
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      {/* Status card */}
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+          <h2 className="font-semibold text-slate-100">Heartbeat Status</h2>
+        </div>
+        <div className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm">
+          <div>
+            <p className="text-slate-400 text-xs mb-0.5">Last run</p>
+            <p className="text-slate-100">
+              {status?.last_run
+                ? `${timeAgo(status.last_run)} · ${new Date(status.last_run).toLocaleTimeString()}`
+                : 'Never'}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400 text-xs mb-0.5">Next expected</p>
+            <p className="text-slate-100">{status?.last_run ? timeUntil(status.next_expected) : '—'}</p>
+          </div>
+          <div>
+            <p className="text-slate-400 text-xs mb-0.5">Interval</p>
+            <p className="text-slate-100">every {status?.interval_minutes ?? '?'} min</p>
+          </div>
+          <div>
+            <p className="text-slate-400 text-xs mb-0.5">Total runs</p>
+            <p className="text-slate-100">{status?.total_runs ?? 0}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Session ledger */}
+      <div>
+        <h2 className="font-semibold text-slate-300 mb-3 text-sm uppercase tracking-wider">Session Ledger</h2>
+        {sessions.length === 0 ? (
+          <div className="text-slate-500 text-sm bg-slate-900 border border-slate-700 rounded-xl p-5">
+            No heartbeats recorded yet. Start the scheduler:
+            <code className="block mt-2 text-slate-300 text-xs">python -m scripts.run_heartbeat_scheduler</code>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {sessions.map((s, i) => (
+              <div
+                key={i}
+                className={`border rounded-xl p-4 ${isOk(s.response) ? 'border-slate-800 bg-slate-900/40' : 'border-slate-700 bg-slate-900'}`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-400">
+                    {new Date(s.timestamp).toLocaleString()} · {timeAgo(s.timestamp)}
+                  </span>
+                  {isOk(s.response) && (
+                    <span className="text-xs bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">Nothing to report</span>
+                  )}
+                </div>
+                {s.response ? (
+                  <p className={`text-sm whitespace-pre-wrap break-words leading-relaxed ${isOk(s.response) ? 'text-slate-500' : 'text-slate-200'}`}>
+                    {s.response}
+                  </p>
+                ) : (
+                  <p className="text-sm text-slate-500 italic">No response recorded</p>
+                )}
+                <button
+                  onClick={() => togglePrompt(i)}
+                  className="mt-2 text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                >
+                  {expandedPrompts[i] ? '▲ hide prompt' : '▾ show prompt'}
+                </button>
+                {expandedPrompts[i] && (
+                  <pre className="mt-2 text-xs text-slate-400 bg-slate-950 rounded-lg p-3 whitespace-pre-wrap break-words border border-slate-800">
+                    {s.prompt}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ==================== MAIN APP ====================
 
 const TABS = [
   { id: 'chat', label: 'Chat' },
   { id: 'core', label: 'Core' },
   { id: 'cron', label: 'Cron' },
+  { id: 'heartbeat', label: 'Hbeat' },
 ]
 
 // Main App Component
@@ -1221,9 +1360,13 @@ function App() {
             <main className="flex-1 overflow-y-auto px-6 py-6">
               <CoreMemoryTab />
             </main>
-          ) : (
+          ) : activeTab === 'cron' ? (
             <main className="flex-1 overflow-y-auto px-6 py-6">
               <CronTab />
+            </main>
+          ) : (
+            <main className="flex-1 overflow-y-auto px-6 py-6">
+              <HeartbeatTab />
             </main>
           )}
         </div>

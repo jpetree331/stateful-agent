@@ -355,6 +355,12 @@ def build_agent():
         model_kwargs["default_headers"] = {
             "User-Agent": "KimiCLI/1.13.0 (kimi-agent-sdk/0.1.4 kimi-code-for-vs-code/0.4.3 0.1.4)"
         }
+        # kimi-for-coding has thinking/reasoning mode enabled by default.
+        # When reasoning is on, Kimi includes `reasoning_content` in every response.
+        # LangChain doesn't re-send that field in subsequent API calls (it's non-standard),
+        # so Kimi gets an assistant-tool-call message without reasoning_content and 400s.
+        # Setting budget_tokens=0 disables thinking entirely, preventing the mismatch.
+        model_kwargs["model_kwargs"] = {"thinking": {"budget_tokens": 0}}
 
     llm = ChatOpenAI(**model_kwargs)
     checkpointer = get_checkpointer()
