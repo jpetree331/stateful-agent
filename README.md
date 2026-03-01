@@ -2,6 +2,8 @@
 
 A local, stateful personal agent built with [LangGraph](https://github.com/langchain-ai/langgraph). Runs on Windows (and Linux/Mac with minor adjustments), remembers itself across sessions via a 5-layer memory system, and has 50+ tools covering web search, file system, code execution, Discord, Telegram, screenshot vision, RSS feeds, cron scheduling, and more.
 
+**In-game chat overlay** — Chat with your agent while gaming. Full memory and context, same unified thread as Discord, Telegram, and the dashboard. No alt-tabbing.
+
 Designed as an open, hackable alternative to Letta/OpenClaw. Built for people who want a real stateful AI companion running locally on their PC — fully configurable, no monthly SaaS fees.
 
 ---
