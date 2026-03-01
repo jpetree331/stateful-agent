@@ -81,7 +81,13 @@ def _call_vision(b64_image: str, prompt: str) -> str:
         or "gpt-4o-mini"
     )
     base_url = os.environ.get("VISION_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or None
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    # VISION_API_KEY lets you use a completely different provider for vision
+    # (e.g. OpenAI for vision while using Kimi for chat). Falls back to the
+    # main OPENAI_API_KEY if not set.
+    api_key = (
+        os.environ.get("VISION_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
 
     kwargs: dict = {"model": model, "api_key": api_key}
     if base_url:

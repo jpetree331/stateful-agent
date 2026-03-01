@@ -6,6 +6,8 @@ const THREAD_ID = 'main'
 // How long to wait for the agent to respond before giving up (ms).
 // Kimi-K2.5 with tool calls can take 60-90s on complex queries.
 const CHAT_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes
+// Vision can also be slow (60s+ on Chutes/Kimi) — give it the same budget.
+const VISION_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes
 
 // Strip <actions>...</actions> tags the agent sometimes emits
 const EMOJI_MAP = { heart: '❤️', smile: '😊', thumbsup: '👍', wave: '👋', star: '⭐' }
@@ -100,6 +102,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [error, setError] = useState(null)
+  const [status, setStatus] = useState(null) // e.g. "Analyzing screenshot..." or "Waiting for Rowan..."
 
   // Overlay controls
   const [opacity, setOpacity] = useState(0.92)
@@ -199,6 +202,7 @@ export default function App() {
     setInput('')
     setPendingScreenshot(null)
     setError(null)
+    setStatus(null)
     loadingRef.current = true
     setLoading(true)
 
@@ -217,9 +221,9 @@ export default function App() {
       let finalMessage = userPrompt
 
       if (hasScreenshot) {
-        // Step 1: Send image to the vision endpoint (30s timeout — vision is fast).
-        // The backend resizes it and calls the vision model, returning plain text.
-        // This keeps image bytes out of the main agent context window entirely.
+        // Step 1: Send image to the vision endpoint.
+        // Vision on Chutes/Kimi can take 60s+ — use the full 3-minute budget.
+        setStatus('Analyzing screenshot...')
         const visionRes = await fetchWithTimeout(
           `${API_BASE}/analyze-screenshot`,
           {
@@ -227,7 +231,7 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_data_url: screenshotData, prompt: userPrompt }),
           },
-          30_000,
+          VISION_TIMEOUT_MS,
         )
 
         if (!visionRes.ok) {
@@ -240,7 +244,8 @@ export default function App() {
         finalMessage = `${userPrompt}\n\n[Screenshot analysis]:\n${visionData.description}`
       }
 
-      // Step 3: Send the text-only message to the agent (long timeout — LLM + tools can be slow)
+      // Step 3: Send the text-only message to the agent
+      setStatus('Waiting for Rowan...')
       const res = await fetchWithTimeout(
         `${API_BASE}/chat`,
         {
@@ -266,8 +271,8 @@ export default function App() {
       // AbortError means we hit the timeout — the agent may still be running.
       // Poll for the response rather than showing a hard error.
       if (err.name === 'AbortError') {
-        setError('Agent is taking a while... polling for response.')
-        // Poll every 5s for up to 5 minutes
+        setStatus(null)
+        setError('Taking longer than expected — polling for response...')
         let attempts = 0
         const maxAttempts = 60
         const poll = setInterval(async () => {
@@ -290,20 +295,22 @@ export default function App() {
           } catch { /* keep polling */ }
           if (attempts >= maxAttempts) {
             clearInterval(poll)
-            setError('No response received after 5 minutes. The agent may still be processing.')
+            setError('No response after 5 minutes. The agent may still be processing.')
             loadingRef.current = false
             setLoading(false)
           }
         }, 5000)
-        return // Don't fall through to finally — polling handles cleanup
+        return
       }
 
+      setStatus(null)
       setError(err.message || 'Failed to send message')
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: null, metadata: {}, error: err.message || 'Something went wrong.' },
       ])
     } finally {
+      setStatus(null)
       loadingRef.current = false
       setLoading(false)
     }
@@ -515,11 +522,11 @@ export default function App() {
           )
         })}
 
-        {/* Loading dots */}
+        {/* Loading indicator with status label */}
         {loading && (
           <div className="flex justify-start">
             <div
-              className="rounded-xl px-3 py-2"
+              className="rounded-xl px-3 py-2 flex items-center gap-2"
               style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <span className="inline-flex gap-1">
@@ -527,6 +534,9 @@ export default function App() {
                 <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '-0.15s' }} />
                 <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" />
               </span>
+              {status && (
+                <span className="text-xs text-slate-500 italic">{status}</span>
+              )}
             </div>
           </div>
         )}
