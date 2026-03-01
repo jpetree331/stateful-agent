@@ -520,9 +520,8 @@ def get_heartbeat_sessions(limit: int = 50):
                 LEFT JOIN LATERAL (
                     SELECT content, created_at FROM messages
                     WHERE thread_id = h.thread_id
-                      AND role = 'assistant' AND idx > h.idx
-                      AND metadata->>'role_display' = 'heartbeat'
-                    ORDER BY idx ASC LIMIT 1
+                      AND idx = h.idx + 1
+                      AND role = 'assistant'
                 ) a ON true
                 WHERE h.thread_id = 'main' AND h.role = 'user'
                   AND h.metadata->>'role_display' = 'heartbeat'
