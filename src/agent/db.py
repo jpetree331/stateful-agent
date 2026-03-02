@@ -187,6 +187,114 @@ def setup_schema() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        # Notes boards (sub-tabs) and items (sticky notes, checklists)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes_boards (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_boards_sort ON notes_boards(sort_order)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes_items (
+                id SERIAL PRIMARY KEY,
+                board_id INTEGER NOT NULL REFERENCES notes_boards(id) ON DELETE CASCADE,
+                item_type TEXT NOT NULL CHECK (item_type IN ('note', 'checklist')),
+                content JSONB NOT NULL DEFAULT '{}',
+                position JSONB NOT NULL DEFAULT '{"x": 0, "y": 0}',
+                size JSONB NOT NULL DEFAULT '{"width": 200, "height": 180}',
+                background_color TEXT NOT NULL DEFAULT '#fef08a',
+                header_color TEXT NOT NULL DEFAULT '#eab308',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_items_board ON notes_items(board_id)"
+        )
+        # Allow 'doc' item type (Milanote-style long-form notes)
+        conn.execute("""
+            ALTER TABLE notes_items DROP CONSTRAINT IF EXISTS notes_items_item_type_check;
+        """)
+        conn.execute("""
+            ALTER TABLE notes_items ADD CONSTRAINT notes_items_item_type_check
+            CHECK (item_type IN ('note', 'checklist', 'doc'));
+        """)
+        # Finished items (moved from checklist when done)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes_finished_items (
+                id SERIAL PRIMARY KEY,
+                board_id INTEGER NOT NULL REFERENCES notes_boards(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                source_checklist_id INTEGER REFERENCES notes_items(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_finished_board ON notes_finished_items(board_id)"
+        )
+        # Archived items (moved from finished; hidden from user, AI can read)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes_archived_items (
+                id SERIAL PRIMARY KEY,
+                board_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                finished_at TIMESTAMPTZ NOT NULL,
+                archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                source_checklist_id INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_archived_board ON notes_archived_items(board_id)"
+        )
+        # Deleted notes (soft delete — archived before removal; empty items are not stored)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes_deleted_items (
+                id SERIAL PRIMARY KEY,
+                original_id INTEGER NOT NULL,
+                board_id INTEGER NOT NULL,
+                item_type TEXT NOT NULL CHECK (item_type IN ('note', 'checklist')),
+                content JSONB NOT NULL DEFAULT '{}',
+                position JSONB NOT NULL DEFAULT '{"x": 0, "y": 0}',
+                size JSONB NOT NULL DEFAULT '{"width": 200, "height": 180}',
+                background_color TEXT NOT NULL DEFAULT '#fef08a',
+                header_color TEXT NOT NULL DEFAULT '#eab308',
+                created_at TIMESTAMPTZ NOT NULL,
+                deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_deleted_deleted_at ON notes_deleted_items(deleted_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_deleted_created_at ON notes_deleted_items(created_at DESC)"
+        )
+        # Allow 'doc' item type in deleted items (match notes_items)
+        conn.execute("""
+            ALTER TABLE notes_deleted_items DROP CONSTRAINT IF EXISTS notes_deleted_items_item_type_check;
+        """)
+        conn.execute("""
+            ALTER TABLE notes_deleted_items ADD CONSTRAINT notes_deleted_items_item_type_check
+            CHECK (item_type IN ('note', 'checklist', 'doc'));
+        """)
+        # Ensure default "General" and "Private" boards exist
+        conn.execute("""
+            INSERT INTO notes_boards (name, sort_order)
+            SELECT 'General', 0
+            WHERE NOT EXISTS (SELECT 1 FROM notes_boards WHERE name = 'General')
+        """)
+        conn.execute("""
+            INSERT INTO notes_boards (name, sort_order)
+            SELECT 'Private', 1
+            WHERE NOT EXISTS (SELECT 1 FROM notes_boards WHERE name = 'Private')
+        """)
 
 
 def _format_metadata(created_at) -> dict:

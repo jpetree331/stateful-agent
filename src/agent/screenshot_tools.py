@@ -93,6 +93,11 @@ def _call_vision(b64_image: str, prompt: str) -> str:
     if base_url:
         kwargs["base_url"] = base_url
 
+    # Qwen/DeepSeek on Chutes: reasoning is on by default. Set VISION_ENABLE_THINKING=false to disable.
+    enable_thinking = os.environ.get("VISION_ENABLE_THINKING", "").strip().lower()
+    if enable_thinking in ("false", "0", "no", "off"):
+        kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
     llm = ChatOpenAI(**kwargs)
 
     message = HumanMessage(content=[

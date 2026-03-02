@@ -50,3 +50,8 @@ pyperclip>=1.8
 
 # Screenshot capture (analyze_screenshot tool)
 Pillow>=10.0
+
+# TTS (KittenTTS — lightweight, CPU-friendly, Apache 2.0)
+# Install from wheel: pip install https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
+kittentts @ https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
+soundfile>=0.12

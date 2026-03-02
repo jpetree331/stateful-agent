@@ -6,6 +6,10 @@ Then open http://localhost:5173 (Vite dev server) or point the dashboard at http
 """
 from __future__ import annotations
 
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+
 import logging
 import os
 import traceback
@@ -17,7 +21,6 @@ from pydantic import BaseModel
 
 # Configure logging — writes to console AND a rotating file at data/api.log
 import logging.handlers
-from pathlib import Path
 
 _LOG_DIR = Path(__file__).resolve().parents[2] / "data"
 _LOG_DIR.mkdir(exist_ok=True)
@@ -57,7 +60,23 @@ from .cron_scheduler import (
 from .discord_listener import start_discord_listener, stop_discord_listener
 from .telegram_listener import start_telegram_listener, stop_telegram_listener
 from .db import check_connection, get_connection, load_messages, setup_schema
-from .graph import build_agent, chat, _get_last_ai_content
+from .graph import build_agent, chat, _get_last_ai_content, get_tool_list_for_api
+from .notes import (
+    list_boards,
+    create_board,
+    get_board,
+    update_board,
+    delete_board,
+    list_items,
+    create_item,
+    get_item,
+    update_item,
+    delete_item,
+    list_finished_items,
+    add_finished_item,
+    archive_finished_item,
+)
+from .hindsight import recall as hindsight_recall
 
 
 @asynccontextmanager
@@ -140,6 +159,12 @@ def post_chat(req: ChatRequest):
     last = _get_last_ai_content(result["messages"])
     logger.info("POST /chat → response length=%d chars", len(last or ""))
     return ChatResponse(response=last or "")
+
+
+@app.get("/tools")
+def get_tools():
+    """Get all tools Rowan has access to, grouped by category."""
+    return {"categories": get_tool_list_for_api()}
 
 
 @app.get("/core-memory", response_model=CoreMemoryResponse)
@@ -547,6 +572,273 @@ def get_heartbeat_sessions(limit: int = 50):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# === Notes (boards + items) ===
+
+class NotesBoardCreate(BaseModel):
+    name: str
+
+
+class NotesBoardUpdate(BaseModel):
+    name: str
+
+
+class NotesItemCreate(BaseModel):
+    item_type: str  # "note" or "checklist"
+    content: dict | None = None
+    position: dict | None = None
+    size: dict | None = None
+    background_color: str = "#fef08a"
+    header_color: str = "#eab308"
+
+
+class NotesItemUpdate(BaseModel):
+    item_type: str | None = None
+    content: dict | None = None
+    position: dict | None = None
+    size: dict | None = None
+    background_color: str | None = None
+    header_color: str | None = None
+
+
+@app.get("/notes/boards")
+def get_notes_boards():
+    """List all notes boards."""
+    return {"boards": list_boards()}
+
+
+@app.post("/notes/boards")
+def post_notes_board(req: NotesBoardCreate):
+    """Create a new notes board."""
+    board = create_board(req.name.strip() or "Untitled")
+    if not board:
+        raise HTTPException(status_code=500, detail="Failed to create board")
+    return board
+
+
+@app.get("/notes/boards/{board_id}")
+def get_notes_board(board_id: int):
+    """Get a single board."""
+    board = get_board(board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+    return board
+
+
+@app.put("/notes/boards/{board_id}")
+def put_notes_board(board_id: int, req: NotesBoardUpdate):
+    """Rename a board."""
+    board = update_board(board_id, req.name.strip() or "Untitled")
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+    return board
+
+
+@app.delete("/notes/boards/{board_id}")
+def delete_notes_board(board_id: int):
+    """Delete a board and all its items. User-only."""
+    if not delete_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    return {"success": True}
+
+
+@app.get("/notes/boards/{board_id}/items")
+def get_notes_items(board_id: int):
+    """List all items on a board."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    return {"items": list_items(board_id)}
+
+
+@app.post("/notes/boards/{board_id}/items")
+def post_notes_item(board_id: int, req: NotesItemCreate):
+    """Create a new note or checklist item."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    if req.item_type not in ("note", "checklist"):
+        raise HTTPException(status_code=400, detail="item_type must be 'note' or 'checklist'")
+    item = create_item(
+        board_id,
+        req.item_type,
+        content=req.content,
+        position=req.position,
+        size=req.size,
+        background_color=req.background_color,
+        header_color=req.header_color,
+    )
+    if not item:
+        raise HTTPException(status_code=500, detail="Failed to create item")
+    return item
+
+
+@app.get("/notes/items/{item_id}")
+def get_notes_item(item_id: int):
+    """Get a single item."""
+    item = get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+@app.put("/notes/items/{item_id}")
+def put_notes_item(item_id: int, req: NotesItemUpdate):
+    """Update an item. AI can use this."""
+    item = update_item(
+        item_id,
+        item_type=req.item_type,
+        content=req.content,
+        position=req.position,
+        size=req.size,
+        background_color=req.background_color,
+        header_color=req.header_color,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+@app.delete("/notes/items/{item_id}")
+def delete_notes_item(item_id: int):
+    """Delete an item. User-only."""
+    if not delete_item(item_id):
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"success": True}
+
+
+class FinishedItemCreate(BaseModel):
+    text: str
+    source_checklist_id: int | None = None
+
+
+@app.get("/notes/boards/{board_id}/finished")
+def get_notes_finished(board_id: int):
+    """List finished items for a board."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    return {"items": list_finished_items(board_id)}
+
+
+@app.post("/notes/boards/{board_id}/finished")
+def post_notes_finished(board_id: int, req: FinishedItemCreate):
+    """Add a finished item (moved from checklist)."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    item = add_finished_item(board_id, req.text.strip(), source_checklist_id=req.source_checklist_id)
+    if not item:
+        raise HTTPException(status_code=500, detail="Failed to add finished item")
+    return item
+
+
+@app.post("/notes/boards/{board_id}/finished/{finished_id}/archive")
+def archive_notes_finished(board_id: int, finished_id: int):
+    """Archive a finished item (moves to hidden archive, AI can read)."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    if not archive_finished_item(board_id, finished_id):
+        raise HTTPException(status_code=404, detail="Finished item not found")
+    return {"success": True}
+
+
+def _format_board_for_ai(board_id: int) -> str:
+    """Format board items as plain text for AI prompts."""
+    import re
+
+    board = get_board(board_id)
+    if not board:
+        return ""
+    items = list_items(board_id)
+    lines = [f"Board: {board.get('name', 'Untitled')}", ""]
+    for i, item in enumerate(items, 1):
+        itype = item.get("item_type", "note")
+        content = item.get("content") or {}
+        title = (content.get("title") or "").strip()
+        if itype == "note":
+            html = content.get("html") or ""
+            md = content.get("markdown") or ""
+            body = md or (re.sub(r"<[^>]+>", " ", html).strip() if html else "")
+            lines.append(f"[Note {i}]" + (f" {title}" if title else ""))
+            if body:
+                lines.append(body)
+        elif itype == "checklist":
+            lines.append(f"[Checklist {i}]" + (f" {title}" if title else ""))
+            for it in content.get("items") or []:
+                txt = (it.get("text") or "").strip()
+                if txt:
+                    lines.append(f"  - {'[x]' if it.get('checked') else '[ ]'} {txt}")
+        elif itype == "doc":
+            lines.append(f"[Doc {i}] {title or 'Untitled'}")
+            html = content.get("html") or ""
+            if html:
+                lines.append(re.sub(r"<[^>]+>", " ", html).strip()[:500])
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+class HindsightRecallRequest(BaseModel):
+    query: str
+
+
+@app.post("/notes/boards/{board_id}/summarize")
+def notes_summarize_board(board_id: int):
+    """Summarize board content via the agent."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    text = _format_board_for_ai(board_id)
+    if not text.strip():
+        return {"summary": "This board is empty."}
+    prompt = f"Summarize the following notes board content in 2–4 concise paragraphs. Focus on key themes, tasks, and ideas:\n\n{text}"
+    try:
+        result = chat(
+            app.state.agent,
+            "__notes_ai__",
+            prompt,
+            user_display_name=os.environ.get("USER_DISPLAY_NAME", "User"),
+            channel_type="notes",
+        )
+        summary = _get_last_ai_content(result["messages"]) or "Could not generate summary."
+        return {"summary": summary}
+    except Exception as e:
+        logger.exception("notes summarize failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/notes/boards/{board_id}/organize")
+def notes_organize_board(board_id: int):
+    """Suggest grouping or layout for board content via the agent."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    text = _format_board_for_ai(board_id)
+    if not text.strip():
+        return {"suggestions": "This board is empty. Add some notes first."}
+    prompt = f"Based on these notes, suggest how to group or organize them. Propose 2–4 logical groups with short names and which items belong in each. Be concise:\n\n{text}"
+    try:
+        result = chat(
+            app.state.agent,
+            "__notes_ai__",
+            prompt,
+            user_display_name=os.environ.get("USER_DISPLAY_NAME", "User"),
+            channel_type="notes",
+        )
+        suggestions = _get_last_ai_content(result["messages"]) or "Could not generate suggestions."
+        return {"suggestions": suggestions}
+    except Exception as e:
+        logger.exception("notes organize failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/notes/hindsight-recall")
+def notes_hindsight_recall(req: HindsightRecallRequest):
+    """Run Hindsight recall and return results for the Notes sidebar."""
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is required")
+    try:
+        result = hindsight_recall(None, query)
+        return {"results": result}
+    except Exception as e:
+        logger.exception("hindsight recall failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class AnalyzeScreenshotRequest(BaseModel):

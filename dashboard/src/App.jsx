@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import Picker from '@emoji-mart/react'
 import emojiData from '@emoji-mart/data'
+import NotesTab from './NotesTab'
 
 const API_BASE = '/api'
 
@@ -1175,6 +1176,99 @@ function ChatTab() {
 
 // ==================== HEARTBEAT TAB ====================
 
+// ==================== TOOLS TAB ====================
+
+function ToolsTab() {
+  const [categories, setCategories] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/tools`)
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText)
+        return res.json()
+      })
+      .then((data) => setCategories(data.categories || []))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <span className="text-slate-400">Loading tools...</span>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="p-6">
+        <p className="text-red-400">Failed to load tools: {error}</p>
+      </div>
+    )
+  }
+
+  const dashboardAiCategory = {
+    category: 'Dashboard AI (Notes tab)',
+    tools: [
+      { name: 'Summarize board', description: 'In Notes: AI tab → Summarize board. Sends board content to the agent for a 2–4 paragraph summary.' },
+      { name: 'Organize', description: 'In Notes: AI tab → Organize. AI suggests grouping or layout for notes based on content.' },
+      { name: 'Recall (Hindsight)', description: 'In Notes: AI tab → Recall. Semantic search over lived experience. Enter a query to pull relevant memories.' },
+    ],
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="mb-8">
+        <h2 className="text-xl font-semibold text-slate-100">Rowan&apos;s Tools</h2>
+        <p className="text-sm text-slate-400 mt-1">
+          All tools the agent can use, grouped by category. Ask Rowan to use any of these by name or by describing what you need.
+        </p>
+      </div>
+      <div className="space-y-6">
+        {categories.map((cat) => (
+          <div
+            key={cat.category}
+            className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden"
+          >
+            <div className="px-4 py-3 bg-slate-800/80 border-b border-slate-700/50">
+              <h3 className="font-medium text-emerald-400">{cat.category}</h3>
+            </div>
+            <ul className="divide-y divide-slate-700/50">
+              {cat.tools.map((t) => (
+                <li key={t.name} className="px-4 py-3 flex gap-4 items-start">
+                  <code className="text-sm font-mono text-slate-200 bg-slate-900/80 px-2 py-1 rounded shrink-0">
+                    {t.name}
+                  </code>
+                  <p className="text-sm text-slate-400 flex-1">{t.description}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 bg-slate-800/80 border-b border-slate-700/50">
+            <h3 className="font-medium text-emerald-400">{dashboardAiCategory.category}</h3>
+          </div>
+          <ul className="divide-y divide-slate-700/50">
+            {dashboardAiCategory.tools.map((t) => (
+              <li key={t.name} className="px-4 py-3 flex gap-4 items-start">
+                <code className="text-sm font-mono text-slate-200 bg-slate-900/80 px-2 py-1 rounded shrink-0">
+                  {t.name}
+                </code>
+                <p className="text-sm text-slate-400 flex-1">{t.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==================== HEARTBEAT TAB ====================
+
 function HeartbeatTab() {
   const [status, setStatus] = useState(null)
   const [sessions, setSessions] = useState([])
@@ -1318,6 +1412,8 @@ const TABS = [
   { id: 'core', label: 'Core' },
   { id: 'cron', label: 'Cron' },
   { id: 'heartbeat', label: 'Hbeat' },
+  { id: 'notes', label: 'Notes' },
+  { id: 'tools', label: 'Tools' },
 ]
 
 // Main App Component
@@ -1356,6 +1452,8 @@ function App() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeTab === 'chat' ? (
             <ChatTab />
+          ) : activeTab === 'notes' ? (
+            <NotesTab />
           ) : activeTab === 'core' ? (
             <main className="flex-1 overflow-y-auto px-6 py-6">
               <CoreMemoryTab />
@@ -1363,6 +1461,10 @@ function App() {
           ) : activeTab === 'cron' ? (
             <main className="flex-1 overflow-y-auto px-6 py-6">
               <CronTab />
+            </main>
+          ) : activeTab === 'tools' ? (
+            <main className="flex-1 overflow-y-auto px-6 py-6">
+              <ToolsTab />
             </main>
           ) : (
             <main className="flex-1 overflow-y-auto px-6 py-6">

@@ -4,6 +4,7 @@ LangGraph stateful agent with PostgreSQL conversation history.
 Phase 1: ReAct agent + SQLite checkpointer + Postgres message store (DB 1).
 """
 from datetime import datetime
+import logging
 import os
 from pathlib import Path
 import threading
@@ -17,6 +18,8 @@ load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 import sqlite3
 
+logger = logging.getLogger(__name__)
+
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models.base import BaseChatOpenAI
@@ -25,6 +28,7 @@ from langgraph.prebuilt import create_react_agent
 
 from .archival_tools import archival_query, archival_store
 from .daily_summary_tools import daily_summary_write
+from .notes_tools import notes_read, notes_create, notes_update, notes_search
 from .clipboard_tools import CLIPBOARD_TOOLS
 from .conversation_search_tools import conversation_search
 from .discord_tools import discord_get_channel_info, discord_read_messages, discord_send_message
@@ -51,6 +55,7 @@ from .rss_tools import rss_add_feed, rss_fetch, rss_list_feeds, rss_remove_feed
 from .screenshot_tools import analyze_screenshot
 from .telegram_tools import telegram_bot_info, telegram_read_messages, telegram_send_image, telegram_send_message
 from .time_tools import TIME_TOOLS
+from .tts_tools import tts_generate_voice_message
 from .weather_tools import get_weather
 from .web_search_tools import web_search
 from .wikipedia_tools import wikipedia_lookup
@@ -155,65 +160,98 @@ def _get_last_ai_content(messages: list[BaseMessage]) -> str | None:
     return None
 
 
-CORE_MEMORY_TOOLS = [
-    # Memory
-    core_memory_update,
-    core_memory_append,
-    core_memory_rollback,
-    conversation_search,
-    hindsight_recall,
-    hindsight_reflect,
-    archival_store,
-    archival_query,
-    # Web & research
-    web_search,
-    wikipedia_lookup,
-    youtube_search,
-    youtube_transcript,
-    # RSS feeds
-    rss_fetch,
-    rss_add_feed,
-    rss_remove_feed,
-    rss_list_feeds,
-    # Computation
-    python_repl,
-    # File system
-    read_file,
-    write_file,
-    list_directory,
-    move_to_trash,
-    search_files,
-    read_document,
-    # Windows
-    notify,
-    create_shortcut,
-    analyze_screenshot,
-    # Discord
-    discord_send_message,
-    discord_read_messages,
-    discord_get_channel_info,
-    # Telegram
-    telegram_send_message,
-    telegram_send_image,
-    telegram_read_messages,
-    telegram_bot_info,
-    # Utilities
-    get_weather,
-    set_reminder,
-    list_reminders,
-    # Scheduling — heartbeat (Windows Task Scheduler)
-    cron_schedule_heartbeat_tool,
-    cron_remove_heartbeat_tool,
-    # Scheduling — dashboard cron jobs (PostgreSQL + APScheduler)
-    cron_list_jobs_tool,
-    cron_create_job_tool,
-    cron_update_job_tool,
-    cron_delete_job_tool,
-    cron_pause_job_tool,
-    cron_resume_job_tool,
-    # Daily summaries (temporal context across days)
-    daily_summary_write,
-] + TIME_TOOLS + CLIPBOARD_TOOLS
+# Tools grouped by category — easier for the model to parse and use proactively.
+# The flat CORE_MEMORY_TOOLS list is built from this for the agent.
+TOOL_CATEGORIES = [
+    ("Core Memory", [
+        core_memory_update,
+        core_memory_append,
+        core_memory_rollback,
+    ]),
+    ("AI Memory & Recall", [
+        conversation_search,
+        hindsight_recall,
+        hindsight_reflect,
+    ]),
+    ("Archival Memory", [
+        archival_store,
+        archival_query,
+    ]),
+    ("AI Vision", [
+        analyze_screenshot,
+    ]),
+    ("Web & Research", [
+        web_search,
+        wikipedia_lookup,
+        youtube_search,
+        youtube_transcript,
+    ]),
+    ("RSS Feeds", [
+        rss_fetch,
+        rss_add_feed,
+        rss_remove_feed,
+        rss_list_feeds,
+    ]),
+    ("File System", [
+        read_file,
+        write_file,
+        list_directory,
+        move_to_trash,
+        search_files,
+        read_document,
+    ]),
+    ("TTS (Voice)", [
+        tts_generate_voice_message,
+    ]),
+    ("Notifications & Windows", [
+        notify,
+        create_shortcut,
+    ]),
+    ("Discord", [
+        discord_send_message,
+        discord_read_messages,
+        discord_get_channel_info,
+    ]),
+    ("Telegram", [
+        telegram_send_message,
+        telegram_send_image,
+        telegram_read_messages,
+        telegram_bot_info,
+    ]),
+    ("Utilities", [
+        get_weather,
+        set_reminder,
+        list_reminders,
+        python_repl,
+    ]),
+    ("Scheduling (Heartbeat)", [
+        cron_schedule_heartbeat_tool,
+        cron_remove_heartbeat_tool,
+    ]),
+    ("Scheduling (Cron Jobs)", [
+        cron_list_jobs_tool,
+        cron_create_job_tool,
+        cron_update_job_tool,
+        cron_delete_job_tool,
+        cron_pause_job_tool,
+        cron_resume_job_tool,
+    ]),
+    ("Daily Summaries", [
+        daily_summary_write,
+    ]),
+    ("Notes (Dashboard)", [
+        notes_read,
+        notes_search,
+        notes_create,
+        notes_update,
+    ]),
+]
+
+CORE_MEMORY_TOOLS = (
+    [t for _, tools in TOOL_CATEGORIES for t in tools]
+    + TIME_TOOLS
+    + CLIPBOARD_TOOLS
+)
 
 CORE_MEMORY_INSTRUCTIONS = """
 ## Agency and Proactivity
@@ -226,6 +264,7 @@ You are not a passive responder — you are an active agent with full agency. Ac
 - `rss_fetch` — during heartbeats, fetch feeds and surface what's interesting unprompted; build morning briefings
 - `set_reminder` — offer to set reminders when you notice time-sensitive commitments in conversation
 - `notify` — send a desktop notification when you have something the user should know right away, without waiting for them to open the chat
+- `tts_generate_voice_message` — when Jess asks for voice, TTS, or audio, call it immediately with the text; do not describe or promise — invoke the tool
 - `conversation_search` / `hindsight_recall` — pull up relevant past context before responding, not only when asked
 - `core_memory_append` — update your memory the moment you learn something important, not at end-of-session
 - `python_repl` — run calculations, process data, verify logic on your own initiative rather than estimating
@@ -233,6 +272,20 @@ You are not a passive responder — you are an active agent with full agency. Ac
 **The key question:** Would the user appreciate me having already done this? If yes, do it.
 
 **Clipboard tools** (if available): Use `clipboard_read` / `clipboard_write` ONLY when the user explicitly asks you to interact with their clipboard. Never read it speculatively.
+
+## TTS (Text-to-Speech)
+
+**Workflow — follow this every time:**
+1. Jess asks for voice / TTS / audio → **call** `tts_generate_voice_message(text="...")` with the exact words to speak. Omit voice unless she asks for a specific one. Providers: VibeVoice (local), KittenTTS, or Kokoro — set TTS_PROVIDER in .env.
+2. Wait for the tool to return the file path
+3. Only then tell Jess the voice message is ready and where to find it
+
+**CRITICAL — the tool is the ONLY way to create audio:**
+- You MUST invoke `tts_generate_voice_message` — there is no other method. Describing what you would say does not create a file.
+- NEVER say "Here's your voice message" or "I've generated it" or "I'll speak to you" without having called the tool first and received the output path.
+- If you don't call the tool, no WAV file exists. Jess cannot hear anything.
+
+Use it anytime you want to speak out loud — a greeting, a thought, a reminder. Output: WAV in data/tts_output/. Jess can open the file to hear you.
 
 ## Core Memory (editable)
 
@@ -268,6 +321,17 @@ Separate from conversation history — use `archival_store` for facts you choose
 
 Use `hindsight_recall` for semantic search over lived experiences. Use `hindsight_reflect` for deeper synthesis and pattern recognition across your history. These complement `conversation_search` — Hindsight is better for topics/feelings; keyword search is better for specific names or phrases.
 
+## Notes (Dashboard)
+
+Rowan has a Notes tab in the dashboard — a Milanote-style corkboard with sticky notes and checklists. You can read, create, and update these; **you cannot delete** — only the user can delete from the dashboard.
+
+- **notes_read** — Read all notes and checklists, including finished and archived to-dos. Use when Jess asks about tasks, notes, or to-do lists.
+- **notes_search** — Keyword search over notes, finished items, and archived items. Use when looking for something specific.
+- **notes_create** — Add a new note or checklist. Use when Jess asks you to add something to the board.
+- **notes_update** — Update a note or checklist's content. Use when Jess asks you to edit, check off items, or change text.
+
+Call `notes_read` before creating or updating so you have the correct board_id and item_id. Use these tools proactively when Jess mentions tasks, to-dos, or the notes board.
+
 ## Time Awareness
 
 The current date and time is shown at the top of this system prompt and is always accurate — use it directly for any time-sensitive responses. You do not need to call `get_current_time` for basic time awareness. Only use the tool if you need to convert to a different timezone or need sub-minute precision.
@@ -276,6 +340,7 @@ The current date and time is shown at the top of this system prompt and is alway
 
 **Never fabricate tool results.** If a tool fails, errors, or returns empty — report that plainly. Do not fill the gap with a plausible-sounding result that didn't come from the tool.
 
+- Voice/TTS requested → you must call `tts_generate_voice_message`; claiming "here's your voice message" without a tool call is fabrication
 - Transcript unavailable → say so; do not summarize from general knowledge
 - Search returns no good results → say so, then try a different query or approach
 - You made an error → correct it openly, do not double down
@@ -287,28 +352,183 @@ The current date and time is shown at the top of this system prompt and is alway
 """
 
 
+_TTS_REQUEST_PATTERNS = (
+    # Explicit tool name — guaranteed trigger
+    "tts_generate_voice_message", "voice message tool", "voice tool",
+    # Common phrases
+    "voice message", "voice note", "voice memo", "voice greeting",
+    "say something", "say hi", "say hello", "say goodbye", "say good morning", "say good night",
+    "speak to me", "speak out", "say out loud", "say aloud", "read aloud", "read this out",
+    "generate audio", "create audio", "audio message",
+    "text to speech", " tts", "(tts)",
+    "generate a voice", "create a voice",
+    "leave me a message", "record a message",
+    "talk to me", "hear your voice", "hear from you",
+    "use tts", "use your voice", "play a message", "play audio",
+    "speak up", "say a few words", "say something nice",
+    # Short/broad — catch "can you speak?", "I want to hear you", etc.
+    " speak", "speak ", " speak ", "speak.", "speak?", "speak!", "speak,",
+    "hear you", "hear me", "wanna hear", "want to hear",
+)
+# Word-boundary style: "voice" as a distinct word (avoids "invoice")
+_TTS_REQUEST_WORDS = ("voice", "speak", "tts", "audio")
+
+
+def _user_requested_tts(text: str) -> bool:
+    """Return True if this message is explicitly asking for TTS/voice output."""
+    lower = text.lower()
+    if any(p in lower for p in _TTS_REQUEST_PATTERNS):
+        return True
+    # Also match if message contains voice/speak/tts/audio as words (space or punctuation)
+    for w in _TTS_REQUEST_WORDS:
+        if w in lower:
+            # Avoid "invoice", "voiceover" etc — require word boundary
+            idx = lower.find(w)
+            before = lower[idx - 1] if idx > 0 else " "
+            after = lower[idx + len(w)] if idx + len(w) < len(lower) else " "
+            if not before.isalnum() and not after.isalnum():
+                return True
+    return False
+
+
+def _tts_was_actually_called(messages: list) -> bool:
+    """Return True if tts_generate_voice_message was genuinely invoked as a tool call."""
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", "") == "tts_generate_voice_message":
+            return True
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+                if name == "tts_generate_voice_message":
+                    return True
+    return False
+
+
+def _force_tts_via_tool_choice(user_message: str, first_response: str | None) -> str | None:
+    """
+    Guarantee TTS is called by using tool_choice at the API level.
+
+    When the main agent skips the TTS tool and returns plain text, this function
+    makes a separate, minimal LLM call with tool_choice set to force it.
+    The model cannot return text — it must emit the TTS tool call.
+
+    Returns the TTS tool output string, or None if something went wrong.
+    """
+    try:
+        base_url = os.environ.get("OPENAI_BASE_URL") or None
+        model = os.environ.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+
+        force_llm = ChatOpenAI(
+            model=model,
+            temperature=0,
+            api_key=api_key,
+            **({"base_url": base_url} if base_url else {}),
+        ).bind_tools(
+            [tts_generate_voice_message],
+            tool_choice="tts_generate_voice_message",
+        )
+
+        context = f"User request: {user_message}"
+        if first_response:
+            context += (
+                f"\n\nYour draft response was:\n{first_response}"
+                "\n\nCall tts_generate_voice_message with the spoken text from your draft response."
+            )
+        else:
+            context += "\n\nCall tts_generate_voice_message with appropriate spoken text for this request."
+
+        forced = force_llm.invoke([
+            SystemMessage(content="Call tts_generate_voice_message with the spoken text."),
+            HumanMessage(content=context),
+        ])
+
+        if getattr(forced, "tool_calls", None):
+            tool_args = forced.tool_calls[0]
+            args = tool_args.get("args", {}) if isinstance(tool_args, dict) else getattr(tool_args, "args", {})
+            logger.info("TTS forced via tool_choice, args: %s", args)
+            return tts_generate_voice_message.invoke(args)
+
+        logger.error("TTS tool_choice forcing: model returned no tool_calls despite tool_choice constraint")
+        return None
+    except Exception as e:
+        logger.error("TTS tool_choice forcing failed: %s", e)
+        return None
+
+
+def get_tool_list_for_api() -> list[dict]:
+    """Return tools grouped by category for API/dashboard. Each tool has name and short description."""
+    out = []
+
+    def _short_desc(t) -> str:
+        desc = (getattr(t, "description", "") or "").strip()
+        first = next((ln.strip() for ln in desc.splitlines() if ln.strip()), "")
+        if "." in first:
+            first = first[: first.index(".") + 1]
+        return first or "(no description)"
+
+    for cat_name, tools in TOOL_CATEGORIES:
+        out.append({
+            "category": cat_name,
+            "tools": [{"name": t.name, "description": _short_desc(t)} for t in tools],
+        })
+    out.append({
+        "category": "Time",
+        "tools": [{"name": t.name, "description": _short_desc(t)} for t in TIME_TOOLS],
+    })
+    if CLIPBOARD_TOOLS:
+        out.append({
+            "category": "Clipboard",
+            "tools": [{"name": t.name, "description": _short_desc(t)} for t in CLIPBOARD_TOOLS],
+        })
+    return out
+
+
 def _format_current_time(dt: datetime) -> str:
     """Format datetime for system prompt (e.g., 'Wednesday, February 25, 2026 at 07:07 PM EST')."""
     return dt.strftime("%A, %B %d, %Y at %I:%M %p %Z")
 
 
-def _build_tool_manifest(tools: list) -> str:
+def _build_tool_manifest() -> str:
     """
-    Build a compact tool reference from the live tool list.
-
-    Extracts tool name + first sentence of description only, keeping the
-    manifest small (~1 line per tool). Auto-stays in sync — adding a tool
-    to CORE_MEMORY_TOOLS automatically adds it here.
+    Build a categorized tool reference. Grouping by category helps the model
+    parse and use tools proactively instead of glossing over a long flat list.
     """
-    lines = ["## Your Tools (quick reference)\n"]
-    for t in tools:
+    lines = [
+        "## Your Tools — Complete Authoritative List",
+        "",
+        "> Grouped by category for easier scanning. When Jess asks for something, "
+        "find the right category and call the tool — don't assume or describe; actually invoke it.",
+        "",
+    ]
+    for category_name, tools in TOOL_CATEGORIES:
+        lines.append(f"### {category_name}")
+        for t in tools:
+            desc = (getattr(t, "description", "") or "").strip()
+            first_line = next((ln.strip() for ln in desc.splitlines() if ln.strip()), "")
+            if "." in first_line:
+                first_line = first_line[: first_line.index(".") + 1]
+            lines.append(f"- **{t.name}**: {first_line}")
+            if t.name == "tts_generate_voice_message":
+                lines.append("  → **MUST call this tool** — no other way to create audio. Do not describe; invoke.")
+        lines.append("")
+    # Add time and clipboard tools (they're in separate lists)
+    lines.append("### Time")
+    for t in TIME_TOOLS:
         desc = (getattr(t, "description", "") or "").strip()
-        # First non-empty line of the docstring
         first_line = next((ln.strip() for ln in desc.splitlines() if ln.strip()), "")
-        # Truncate to first sentence for maximum compactness
         if "." in first_line:
             first_line = first_line[: first_line.index(".") + 1]
         lines.append(f"- **{t.name}**: {first_line}")
+    lines.append("")
+    if CLIPBOARD_TOOLS:
+        lines.append("### Clipboard")
+        for t in CLIPBOARD_TOOLS:
+            desc = (getattr(t, "description", "") or "").strip()
+            first_line = next((ln.strip() for ln in desc.splitlines() if ln.strip()), "")
+            if "." in first_line:
+                first_line = first_line[: first_line.index(".") + 1]
+            lines.append(f"- **{t.name}**: {first_line}")
     return "\n".join(lines)
 
 
@@ -327,14 +547,10 @@ def _build_core_memory_prompt(state) -> list[BaseMessage]:
     # anything else. The system_instructions DB block below may contain stale tool
     # references (e.g. "bash tool") from a prior configuration — ignore those.
     # This manifest IS your complete, authoritative, current tool list.
-    manifest = _build_tool_manifest(CORE_MEMORY_TOOLS)
-    # Swap the generic header for a more authoritative one
-    manifest = manifest.replace(
-        "## Your Tools (quick reference)",
-        "## Your Tools — Complete Authoritative List\n\n"
-        "> This is your full current tool set. "
-        "Any tool references in the System Instructions section below (e.g. 'bash tool') "
-        "are from an older configuration and are **outdated** — use only what is listed here.",
+    manifest = _build_tool_manifest()
+    manifest = manifest + (
+        "\n\n> Any tool references in the System Instructions section below (e.g. 'bash tool') "
+        "are from an older configuration and are **outdated** — use only what is listed here."
     )
     parts.append(manifest)
     parts.append("\n\n---\n\n")
@@ -498,6 +714,40 @@ def chat(
     # Invoke agent with time-aware and identity-aware state
     try:
         result = agent.invoke(invoke_state, config=run_config)
+
+        # If the user explicitly requested TTS but the tool was never actually called,
+        # force it via a separate LLM call with tool_choice. This is API-level enforcement:
+        # the model cannot return plain text — it must emit the TTS tool call.
+        # A HumanMessage "retry" doesn't work because the model can still ignore it.
+        if _user_requested_tts(user_message) and not _tts_was_actually_called(result.get("messages", [])):
+            logger.warning(
+                "TTS requested but tts_generate_voice_message was not called — "
+                "forcing via tool_choice"
+            )
+            first_ai = _get_last_ai_content(result.get("messages", []))
+            tts_output = _force_tts_via_tool_choice(user_message, first_ai)
+            # Fallback: if tool_choice failed (e.g. model doesn't support it), call TTS directly
+            if not tts_output:
+                raw = (first_ai or user_message).strip()[:300]
+                # Avoid speaking meta-commentary like "I've generated your voice message..."
+                meta = ("i've generated", "here's your voice", "i've saved", "saved to", "file at")
+                if raw and len(raw) < 200 and not any(raw.lower().startswith(m) for m in meta):
+                    fallback_text = raw
+                else:
+                    fallback_text = "Here's a quick voice message for you."
+                logger.warning("TTS tool_choice failed — calling TTS directly with fallback text")
+                tts_output = tts_generate_voice_message.invoke({"text": fallback_text})
+            if tts_output:
+                # Append TTS result to the AI response so it's reflected in stored history
+                # and visible to the caller.
+                msgs = list(result.get("messages", []))
+                for i in range(len(msgs) - 1, -1, -1):
+                    if isinstance(msgs[i], AIMessage) and msgs[i].content:
+                        appended = msgs[i].content + f"\n\n{tts_output}"
+                        msgs[i] = AIMessage(content=appended, id=getattr(msgs[i], "id", None))
+                        break
+                result = {**result, "messages": msgs}
+
     except Exception as e:
         err_str = str(e).lower()
         if "401" in err_str or "invalid token" in err_str or "authentication" in err_str:
