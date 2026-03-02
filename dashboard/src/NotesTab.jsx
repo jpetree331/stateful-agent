@@ -14,7 +14,6 @@ import {
   useDraggable,
   useDroppable,
 } from '@dnd-kit/core'
-import { snapCenterToCursor } from '@dnd-kit/modifiers'
 import ReactMarkdown from 'react-markdown'
 import * as notesApi from './notesApi'
 
@@ -1200,6 +1199,7 @@ export default function NotesTab() {
   const didPanRef = useRef(false)
   const selectedEditorRef = useRef(null)
   const canvasRef = useRef(null)
+  const lastDragCanvasPosRef = useRef(null)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -1302,8 +1302,12 @@ export default function NotesTab() {
     if (selectedItem?.id === itemId) setSelectedItem((s) => (s?.id === itemId ? { ...s, ...patch } : s))
     try {
       const updated = await notesApi.updateItem(itemId, patch)
-      setItems((prev) => prev.map((i) => (i.id === itemId ? updated : i)))
-      if (selectedItem?.id === itemId) setSelectedItem(updated)
+      // Preserve our position/size for drag/resize — backend may round or return different precision
+      const merged = patch.position != null || patch.size != null
+        ? { ...updated, ...(patch.position != null && { position: patch.position }), ...(patch.size != null && { size: patch.size }) }
+        : updated
+      setItems((prev) => prev.map((i) => (i.id === itemId ? merged : i)))
+      if (selectedItem?.id === itemId) setSelectedItem(merged)
     } catch (err) {
       setError(err.message)
       loadItems()
@@ -1486,6 +1490,18 @@ export default function NotesTab() {
       onDragStart={(e) => {
         setActiveDragId(e.active.id)
         setActiveDragData(e.active.data.current)
+        lastDragCanvasPosRef.current = null
+      }}
+      onDragMove={(event) => {
+        const { active, delta } = event
+        const data = active.data.current
+        if (data?.type === 'item' && delta) {
+          const item = data.item
+          const zoom = Math.max(0.25, boardZoom)
+          const newX = (item.position?.x ?? 0) + delta.x / zoom
+          const newY = (item.position?.y ?? 0) + delta.y / zoom
+          lastDragCanvasPosRef.current = { x: newX, y: newY }
+        }
       }}
       onDragEnd={(event) => {
         const { active, delta, over } = event
@@ -1518,9 +1534,17 @@ export default function NotesTab() {
             return
           }
         }
-        if (data?.type === 'item' && delta) {
+        if (data?.type === 'item') {
           const item = data.item
-          updateItem(item.id, { position: { x: (item.position?.x ?? 0) + delta.x, y: (item.position?.y ?? 0) + delta.y } })
+          // Prefer position from last onDragMove (more reliable); fallback to delta
+          const pos = lastDragCanvasPosRef.current ?? (delta && (() => {
+            const zoom = Math.max(0.25, boardZoom)
+            return { x: (item.position?.x ?? 0) + delta.x / zoom, y: (item.position?.y ?? 0) + delta.y / zoom }
+          })())
+          if (pos) {
+            updateItem(item.id, { position: { x: pos.x, y: pos.y } })
+          }
+          lastDragCanvasPosRef.current = null
         }
       }}
       autoScroll={false}
@@ -1708,7 +1732,7 @@ export default function NotesTab() {
               )
             )}
           </div>
-          <DragOverlay dropAnimation={null} modifiers={[snapCenterToCursor]}>
+          <DragOverlay dropAnimation={null}>
             {activeDragId ? (() => {
               const item = items.find((i) => `note-${i.id}` === activeDragId)
               if (item) {
