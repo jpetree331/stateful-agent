@@ -1221,9 +1221,9 @@ function ToolsTab() {
   return (
     <div className="max-w-3xl mx-auto">
       <div className="mb-8">
-        <h2 className="text-xl font-semibold text-slate-100">Rowan&apos;s Tools</h2>
+        <h2 className="text-xl font-semibold text-slate-100">Agent&apos;s Tools</h2>
         <p className="text-sm text-slate-400 mt-1">
-          All tools the agent can use, grouped by category. Ask Rowan to use any of these by name or by describing what you need.
+          All tools the agent can use, grouped by category. Ask the agent to use any of these by name or by describing what you need.
         </p>
       </div>
       <div className="space-y-6">

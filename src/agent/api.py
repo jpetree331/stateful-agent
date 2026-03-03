@@ -36,7 +36,7 @@ logging.basicConfig(
         ),
     ],
 )
-logger = logging.getLogger("rowan.api")
+logger = logging.getLogger("agent.api")
 
 from .core_memory import get_all_blocks, update_block, update_system_instructions
 from .cron_jobs import (
@@ -163,7 +163,7 @@ def post_chat(req: ChatRequest):
 
 @app.get("/tools")
 def get_tools():
-    """Get all tools Rowan has access to, grouped by category."""
+    """Get all tools the agent has access to, grouped by category."""
     return {"categories": get_tool_list_for_api()}
 
 
