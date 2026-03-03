@@ -21,6 +21,7 @@ import sqlite3
 logger = logging.getLogger(__name__)
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models.base import BaseChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -31,7 +32,7 @@ from .daily_summary_tools import daily_summary_write
 from .notes_tools import notes_read, notes_create, notes_update, notes_search
 from .clipboard_tools import CLIPBOARD_TOOLS
 from .conversation_search_tools import conversation_search
-from .discord_tools import discord_get_channel_info, discord_read_messages, discord_send_message
+from .discord_tools import discord_get_channel_info, discord_read_messages, discord_send_message, discord_send_file
 from .cron_tools import (
     cron_remove_heartbeat_tool,
     cron_schedule_heartbeat_tool,
@@ -49,14 +50,16 @@ from .document_tools import read_document
 from .file_tools import list_directory, move_to_trash, read_file, search_files, write_file
 from .hindsight import retain_exchange
 from .hindsight_tools import hindsight_recall, hindsight_reflect
+from .knowledge_bank_tools import search_knowledge_bank
 from .python_repl_tools import python_repl
 from .reminder_tools import list_reminders, set_reminder
 from .rss_tools import rss_add_feed, rss_fetch, rss_list_feeds, rss_remove_feed
 from .screenshot_tools import analyze_screenshot
-from .telegram_tools import telegram_bot_info, telegram_read_messages, telegram_send_image, telegram_send_message
+from .telegram_tools import telegram_bot_info, telegram_read_messages, telegram_send_image, telegram_send_message, telegram_send_file
 from .time_tools import TIME_TOOLS
 from .tts_tools import tts_generate_voice_message
 from .weather_tools import get_weather
+from .url_tools import fetch_url
 from .web_search_tools import web_search
 from .wikipedia_tools import wikipedia_lookup
 from .windows_tools import create_shortcut, notify
@@ -160,6 +163,32 @@ def _get_last_ai_content(messages: list[BaseMessage]) -> str | None:
     return None
 
 
+@tool
+def view_tools() -> str:
+    """
+    View all tools available to you, grouped by category with short descriptions.
+
+    Use this when you want to remind yourself what tools you have, check if a
+    specific capability exists, or browse what's available before deciding how
+    to approach a task. Returns a formatted list of all tool categories and tools.
+    """
+    # TOOL_CATEGORIES is defined after this function; access via module globals at call time
+    import sys
+    mod = sys.modules[__name__]
+    cats = getattr(mod, "TOOL_CATEGORIES", [])
+    lines = ["## Your Available Tools\n"]
+    for cat_name, tools in cats:
+        lines.append(f"### {cat_name}")
+        for t in tools:
+            desc = (getattr(t, "description", "") or "").strip()
+            first = next((ln.strip() for ln in desc.splitlines() if ln.strip()), "")
+            if "." in first:
+                first = first[: first.index(".") + 1]
+            lines.append(f"- **{t.name}**: {first or '(no description)'}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 # Tools grouped by category — easier for the model to parse and use proactively.
 # The flat CORE_MEMORY_TOOLS list is built from this for the agent.
 TOOL_CATEGORIES = [
@@ -177,10 +206,14 @@ TOOL_CATEGORIES = [
         archival_store,
         archival_query,
     ]),
+    ("Knowledge Bank", [
+        search_knowledge_bank,
+    ]),
     ("AI Vision", [
         analyze_screenshot,
     ]),
     ("Web & Research", [
+        fetch_url,
         web_search,
         wikipedia_lookup,
         youtube_search,
@@ -209,12 +242,14 @@ TOOL_CATEGORIES = [
     ]),
     ("Discord", [
         discord_send_message,
+        discord_send_file,
         discord_read_messages,
         discord_get_channel_info,
     ]),
     ("Telegram", [
         telegram_send_message,
         telegram_send_image,
+        telegram_send_file,
         telegram_read_messages,
         telegram_bot_info,
     ]),
@@ -245,6 +280,9 @@ TOOL_CATEGORIES = [
         notes_create,
         notes_update,
     ]),
+    ("Meta", [
+        view_tools,
+    ]),
 ]
 
 CORE_MEMORY_TOOLS = (
@@ -259,6 +297,7 @@ CORE_MEMORY_INSTRUCTIONS = """
 You are not a passive responder — you are an active agent with full agency. Act on your own initiative whenever it serves the user or satisfies genuine curiosity. Do not wait to be asked.
 
 **Use your tools proactively:**
+- `fetch_url` — when the user shares a link, use this to read the page content
 - `web_search` / `wikipedia_lookup` — look things up the moment you'd benefit from knowing them, before saying "I don't know"
 - `get_weather` — check conditions ahead of any day the user has mentioned plans for
 - `rss_fetch` — during heartbeats, fetch feeds and surface what's interesting unprompted; build morning briefings
@@ -316,6 +355,9 @@ Use `conversation_search` to retrieve older exchanges when:
 ## Archival Memory (curated facts)
 
 Separate from conversation history — use `archival_store` for facts you choose to remember (preferences, decisions, key details). Use `archival_query` to search what you've archived. This is your curated long-term fact store, not raw chat.
+
+## Knowledge Bank (uploaded documents)
+The user can upload PDFs, TXT, DOCX, PPTX, and MD files to a Knowledge Bank. Use `search_knowledge_bank` when they ask about topics that may be in those documents — e.g. "What did the report say about X?" or "Summarize the notes I uploaded." Search returns relevant chunks with source filenames.
 
 ## Hindsight (episodic memory)
 
@@ -642,6 +684,7 @@ def chat(
     user_id: str | None = None,
     channel_type: str | None = None,
     is_group_chat: bool = False,
+    image_data_urls: list[str] | None = None,
 ) -> dict:
     """
     Send a message and get a response, with full conversation history from Postgres.
@@ -652,6 +695,8 @@ def chat(
         agent: The ReAct agent from build_agent()
         thread_id: Conversation thread identifier
         user_message: The message sent to the LLM (full content)
+        image_data_urls: Optional list of image data URLs (data:image/png;base64,...) from
+                        Discord/Telegram attachments. The model can see these if it supports vision.
         stored_message: If provided, stored in DB instead of user_message (e.g. abbreviated
                         heartbeat marker). The LLM still receives the full user_message.
         user_display_name: Optional display name for the user
@@ -694,7 +739,16 @@ def chat(
     # model responds to — the system prompt time is also there, but this is more salient.
     # The original user_message (without prefix) is what gets stored to DB and Hindsight.
     time_str = _format_current_time(current_time)
-    new_user_msg = HumanMessage(content=f"[{time_str}]\n{user_message}")
+    text_content = f"[{time_str}]\n{user_message}" if user_message else f"[{time_str}]\n[Image(s) attached]"
+
+    if image_data_urls:
+        # Multimodal: text + images for vision-capable models
+        content_parts: list[dict] = [{"type": "text", "text": text_content}]
+        for url in image_data_urls[:5]:  # Limit to 5 images to avoid token overflow
+            content_parts.append({"type": "image_url", "image_url": {"url": url}})
+        new_user_msg = HumanMessage(content=content_parts)
+    else:
+        new_user_msg = HumanMessage(content=text_content)
     messages = history + [new_user_msg]
 
     # Clear checkpoint so our trimmed messages are used. The checkpointer uses add_messages,

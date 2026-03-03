@@ -155,6 +155,63 @@ def telegram_send_image(image_path: str, chat_id: str = "", caption: str = "") -
 
 
 @tool
+def telegram_send_file(file_path: str, chat_id: str = "", caption: str = "") -> str:
+    """
+    Send any file (PDF, document, image, etc.) to a Telegram chat.
+
+    Use to share reports, screenshots, documents, or any file with the user on Telegram.
+    Telegram supports files up to 50MB. Images are sent as documents (preserves quality).
+
+    Args:
+        file_path: Absolute path to the file to send.
+        chat_id: Telegram chat ID. Leave blank for TELEGRAM_CHAT_ID from .env.
+        caption: Optional caption to display with the file (max 1024 chars).
+    """
+    err = _require_token()
+    if err:
+        return err
+
+    cid = chat_id.strip() or TELEGRAM_DEFAULT_CHAT_ID
+    if not cid:
+        return "Error: provide a chat_id or set TELEGRAM_CHAT_ID in .env."
+
+    path = Path(file_path).expanduser().resolve()
+    if not path.exists():
+        return f"Error: file not found: {path}"
+    if not path.is_file():
+        return f"Error: not a file: {path}"
+
+    size_mb = path.stat().st_size / (1024 * 1024)
+    if size_mb > 50:
+        return f"Error: file is {size_mb:.1f} MB — Telegram limit is 50 MB."
+
+    try:
+        import mimetypes
+        mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        with open(path, "rb") as f:
+            files = {"document": (path.name, f, mime)}
+            data: dict = {"chat_id": cid}
+            if caption:
+                data["caption"] = caption[:1024]
+            resp = httpx.post(
+                f"{_base_url()}/sendDocument",
+                files=files,
+                data=data,
+                timeout=120,
+            )
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("ok"):
+            msg_id = result["result"]["message_id"]
+            return f"File '{path.name}' sent to Telegram chat {cid} (message_id: {msg_id})."
+        return f"Telegram error: {result.get('description', 'unknown')}"
+    except httpx.HTTPStatusError as e:
+        return f"Telegram API error {e.response.status_code}: {e.response.text[:300]}"
+    except Exception as e:
+        return f"Telegram send file failed: {e}"
+
+
+@tool
 def telegram_read_messages(limit: int = 10, mark_as_read: bool = True) -> str:
     """
     Read recent incoming messages sent to the bot.

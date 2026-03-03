@@ -1,8 +1,8 @@
 """
-Minimal FastAPI server for local dashboard testing.
+FastAPI server for the agent dashboard.
 
-Run: python -m src.agent.api
-Then open http://localhost:5173 (Vite dev server) or point the dashboard at http://localhost:8000.
+Local dev: Run API + Vite dev server (npm run dev in dashboard/). Open http://localhost:5173.
+Public (ngrok): Build dashboard (npm run build), run API, then ngrok http 8000. One URL serves both.
 """
 from __future__ import annotations
 
@@ -10,13 +10,19 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 
+import asyncio
+import base64
 import logging
 import os
 import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, File, Form, FastAPI, HTTPException, UploadFile
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Configure logging — writes to console AND a rotating file at data/api.log
@@ -58,7 +64,14 @@ from .cron_scheduler import (
     refresh_job_in_scheduler,
 )
 from .discord_listener import start_discord_listener, stop_discord_listener
-from .telegram_listener import start_telegram_listener, stop_telegram_listener
+from .telegram_listener import (
+    delete_telegram_webhook,
+    get_telegram_webhook_chat_id,
+    process_telegram_update,
+    register_telegram_webhook,
+    start_telegram_listener,
+    stop_telegram_listener,
+)
 from .db import check_connection, get_connection, load_messages, setup_schema
 from .graph import build_agent, chat, _get_last_ai_content, get_tool_list_for_api
 from .notes import (
@@ -77,6 +90,16 @@ from .notes import (
     archive_finished_item,
 )
 from .hindsight import recall as hindsight_recall
+from .knowledge_bank import (
+    delete_file as kb_delete_file,
+    get_file_chunks as kb_get_chunks,
+    get_file_content as kb_get_content,
+    is_configured as kb_is_configured,
+    list_files as kb_list_files,
+    update_file_tags as kb_update_tags,
+    upload_file as kb_upload_file,
+    upload_from_url as kb_upload_from_url,
+)
 
 
 @asynccontextmanager
@@ -87,17 +110,56 @@ async def lifespan(app: FastAPI):
     # Start background services
     start_scheduler()
     start_discord_listener(app.state.agent)
-    start_telegram_listener(app.state.agent)
+    telegram_task = start_telegram_listener(app.state.agent)
+    webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "").strip()
+    if webhook_url:
+        await register_telegram_webhook(webhook_url)
+    if telegram_task is not None:
+        app.state._telegram_poll_task = telegram_task
     yield
     # Cleanup
     stop_scheduler()
     await stop_discord_listener()
     stop_telegram_listener()
+    if webhook_url:
+        await delete_telegram_webhook()
 
 
 app = FastAPI(lifespan=lifespan)
+api_router = APIRouter()
 
-# CORS_ORIGINS env var: comma-separated list of extra allowed origins (e.g. your Netlify URL).
+# Optional: password-protect dashboard (for ngrok). Set DASHBOARD_PASSWORD in .env.
+# When set, browser shows a login popup. Username can be anything; password must match.
+_DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "").strip()
+
+
+class DashboardAuthMiddleware(BaseHTTPMiddleware):
+    """HTTP Basic Auth when DASHBOARD_PASSWORD is set."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if not _DASHBOARD_PASSWORD:
+            return await call_next(request)
+
+        auth = request.headers.get("Authorization")
+        if auth and auth.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth[6:]).decode("utf-8")
+                _, password = decoded.split(":", 1)
+                if password == _DASHBOARD_PASSWORD:
+                    return await call_next(request)
+            except Exception:
+                pass
+
+        return Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Dashboard", charset="UTF-8"'},
+            content="Authentication required",
+        )
+
+
+app.add_middleware(DashboardAuthMiddleware)
+
+# CORS_ORIGINS env var: comma-separated list of extra allowed origins (e.g. your ngrok URL).
 # Example: CORS_ORIGINS=https://your-dashboard.netlify.app
 _extra_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 
@@ -116,6 +178,8 @@ class ChatRequest(BaseModel):
     user_id: str | None = None
     channel_type: str | None = None  # "discord", "telegram", or "local"
     is_group_chat: bool = False
+    image_data_urls: list[str] | None = None
+    document_text: str | None = None  # Extracted text from PDF/DOCX/PPTX/TXT/MD
 
 
 class ChatResponse(BaseModel):
@@ -135,20 +199,47 @@ class CoreMemoryResponse(BaseModel):
     blocks: dict[str, CoreMemoryBlock]
 
 
-@app.post("/chat", response_model=ChatResponse)
+def _run_chat(
+    message: str,
+    thread_id: str = "main",
+    user_id: str | None = None,
+    channel_type: str | None = None,
+    is_group_chat: bool = False,
+    image_data_urls: list[str] | None = None,
+    document_text: str | None = None,
+):
+    """Run chat with optional images and document text."""
+    full_message = (message or "").strip()
+    if document_text:
+        full_message = (full_message + "\n\n" + document_text).strip()
+    if not full_message:
+        full_message = "[Image(s) attached]"
+    return chat(
+        app.state.agent,
+        thread_id,
+        full_message,
+        user_display_name=os.environ.get("USER_DISPLAY_NAME", "User"),
+        user_id=user_id,
+        channel_type=channel_type,
+        is_group_chat=is_group_chat,
+        image_data_urls=image_data_urls,
+    )
+
+
+@api_router.post("/chat", response_model=ChatResponse)
 def post_chat(req: ChatRequest):
     """Handle a chat message and return the assistant response."""
     preview = req.message[:120].replace("\n", " ")
     logger.info("POST /chat thread=%s channel=%s msg=%r", req.thread_id, req.channel_type, preview)
     try:
-        result = chat(
-            app.state.agent,
-            req.thread_id,
+        result = _run_chat(
             req.message,
-            user_display_name=os.environ.get("USER_DISPLAY_NAME", "User"),
+            thread_id=req.thread_id,
             user_id=req.user_id,
             channel_type=req.channel_type,
             is_group_chat=req.is_group_chat,
+            image_data_urls=req.image_data_urls,
+            document_text=req.document_text,
         )
     except RuntimeError as e:
         logger.error("POST /chat RuntimeError: %s", e)
@@ -161,13 +252,96 @@ def post_chat(req: ChatRequest):
     return ChatResponse(response=last or "")
 
 
-@app.get("/tools")
+@api_router.post("/chat/upload", response_model=ChatResponse)
+async def post_chat_with_files(
+    message: str = Form(""),
+    thread_id: str = Form("main"),
+    files: list[UploadFile] = File(default=[]),
+):
+    """Handle chat with file attachments (images + documents). Same formats as Discord."""
+    image_data_urls: list[str] = []
+    document_parts: list[str] = []
+    _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    _DOC_EXT = {".pdf", ".txt", ".pptx", ".docx", ".md"}
+    _MAX_DOC_CHARS = 60_000
+
+    for f in files or []:
+        fn = (f.filename or "").lower()
+        ext = "." + fn.split(".")[-1] if "." in fn else ""
+        try:
+            data = await f.read()
+        except Exception as e:
+            logger.warning("chat/upload: failed to read %s: %s", fn, e)
+            continue
+        if ext in _IMAGE_EXT:
+            try:
+                from PIL import Image
+                from .screenshot_tools import _resize_for_vision, _image_to_base64
+                import io
+                img = Image.open(io.BytesIO(data)).convert("RGB")
+                img = _resize_for_vision(img)
+                b64 = _image_to_base64(img)
+                image_data_urls.append(f"data:image/jpeg;base64,{b64}")
+            except Exception as e:
+                logger.warning("chat/upload: failed to process image %s: %s", fn, e)
+        elif ext in _DOC_EXT:
+            try:
+                from .document_tools import extract_text_from_document_bytes
+                text = extract_text_from_document_bytes(data, f.filename or "")
+                if not text.startswith("Error:"):
+                    if len(text) > _MAX_DOC_CHARS:
+                        text = text[:_MAX_DOC_CHARS] + f"\n\n[... truncated at {_MAX_DOC_CHARS:,} chars]"
+                    document_parts.append(f"\n\n--- Attachment: {f.filename} ---\n{text}")
+            except Exception as e:
+                logger.warning("chat/upload: failed to extract document %s: %s", fn, e)
+
+    doc_text = "".join(document_parts) if document_parts else None
+    full_msg = (message or "").strip()
+    if not full_msg and not image_data_urls and not doc_text:
+        raise HTTPException(status_code=400, detail="Message or files required")
+    try:
+        result = _run_chat(
+            full_msg or "[Image(s) attached]",
+            thread_id=thread_id,
+            image_data_urls=image_data_urls if image_data_urls else None,
+            document_text=doc_text,
+        )
+    except RuntimeError as e:
+        logger.error("POST /chat/upload RuntimeError: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("POST /chat/upload: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Agent error: {e}")
+    last = _get_last_ai_content(result["messages"])
+    return ChatResponse(response=last or "")
+
+
+@api_router.post("/telegram-webhook")
+async def telegram_webhook(request: Request):
+    """
+    Telegram webhook endpoint. Telegram POSTs updates here when TELEGRAM_WEBHOOK_URL is set.
+    Returns 200 immediately; processes update in background.
+    """
+    chat_id = get_telegram_webhook_chat_id()
+    if chat_id is None:
+        raise HTTPException(status_code=503, detail="Telegram webhook not configured")
+    try:
+        update = await request.json()
+    except Exception as e:
+        logger.warning("telegram-webhook: invalid JSON: %s", e)
+        return {"ok": True}
+    agent = request.app.state.agent
+    asyncio.create_task(process_telegram_update(agent, update, chat_id))
+    return {"ok": True}
+
+
+@api_router.get("/tools")
 def get_tools():
     """Get all tools the agent has access to, grouped by category."""
     return {"categories": get_tool_list_for_api()}
 
 
-@app.get("/core-memory", response_model=CoreMemoryResponse)
+@api_router.get("/core-memory", response_model=CoreMemoryResponse)
 def get_core_memory():
     """Get all core memory blocks."""
     blocks = get_all_blocks()
@@ -193,7 +367,7 @@ def get_core_memory():
     )
 
 
-@app.post("/core-memory/{block_type}")
+@api_router.post("/core-memory/{block_type}")
 def update_core_memory(block_type: str, req: CoreMemoryUpdateRequest):
     """Update a core memory block. Users can edit all blocks; read_only flag protects from AI edits."""
     if block_type == "system_instructions":
@@ -306,7 +480,7 @@ def _job_to_response(job: dict) -> CronJobResponse:
     )
 
 
-@app.get("/cron/timezones", response_model=TimezonesResponse)
+@api_router.get("/cron/timezones", response_model=TimezonesResponse)
 def get_timezones():
     """Get list of available timezones."""
     return TimezonesResponse(
@@ -314,14 +488,14 @@ def get_timezones():
     )
 
 
-@app.get("/cron/jobs", response_model=CronJobListResponse)
+@api_router.get("/cron/jobs", response_model=CronJobListResponse)
 def get_cron_jobs(status: str | None = None):
     """Get all cron jobs, ordered by newest first."""
     jobs = list_cron_jobs(status=status)
     return CronJobListResponse(jobs=[_job_to_response(j) for j in jobs])
 
 
-@app.post("/cron/jobs", response_model=CronJobResponse)
+@api_router.post("/cron/jobs", response_model=CronJobResponse)
 def create_job(req: CronJobCreate):
     """Create a new cron job (recurring or one-time)."""
     # Validate one-time vs recurring
@@ -355,7 +529,7 @@ def create_job(req: CronJobCreate):
     return _job_to_response(job)
 
 
-@app.get("/cron/jobs/{job_id}", response_model=CronJobResponse)
+@api_router.get("/cron/jobs/{job_id}", response_model=CronJobResponse)
 def get_job(job_id: int):
     """Get a single cron job."""
     job = get_cron_job(job_id)
@@ -364,7 +538,7 @@ def get_job(job_id: int):
     return _job_to_response(job)
 
 
-@app.put("/cron/jobs/{job_id}", response_model=CronJobResponse)
+@api_router.put("/cron/jobs/{job_id}", response_model=CronJobResponse)
 def update_job(job_id: int, req: CronJobUpdate):
     """Update a cron job."""
     # Check if job exists
@@ -392,7 +566,7 @@ def update_job(job_id: int, req: CronJobUpdate):
     return _job_to_response(job)
 
 
-@app.delete("/cron/jobs/{job_id}")
+@api_router.delete("/cron/jobs/{job_id}")
 def delete_job(job_id: int):
     """Delete a cron job."""
     # Check if job exists
@@ -410,7 +584,7 @@ def delete_job(job_id: int):
     return {"success": True, "message": f"Cron job {job_id} deleted"}
 
 
-@app.post("/cron/jobs/{job_id}/pause", response_model=CronJobResponse)
+@api_router.post("/cron/jobs/{job_id}/pause", response_model=CronJobResponse)
 def pause_job(job_id: int):
     """Pause a cron job."""
     job = pause_cron_job(job_id)
@@ -423,7 +597,7 @@ def pause_job(job_id: int):
     return _job_to_response(job)
 
 
-@app.post("/cron/jobs/{job_id}/resume", response_model=CronJobResponse)
+@api_router.post("/cron/jobs/{job_id}/resume", response_model=CronJobResponse)
 def resume_job(job_id: int):
     """Resume a paused cron job."""
     job = resume_cron_job(job_id)
@@ -436,7 +610,7 @@ def resume_job(job_id: int):
     return _job_to_response(job)
 
 
-@app.post("/cron/jobs/{job_id}/clone", response_model=CronJobResponse)
+@api_router.post("/cron/jobs/{job_id}/clone", response_model=CronJobResponse)
 def clone_job(job_id: int):
     """Clone an existing cron job."""
     # Check if original exists
@@ -465,7 +639,7 @@ class MessagesResponse(BaseModel):
     messages: list[MessageItem]
 
 
-@app.get("/messages", response_model=MessagesResponse)
+@api_router.get("/messages", response_model=MessagesResponse)
 def get_messages(thread_id: str = "main", limit: int = 200):
     """Get conversation history for a thread (for dashboard display)."""
     rows = load_messages(thread_id, limit=limit, include_metadata=True)
@@ -495,7 +669,7 @@ class HeartbeatStatusResponse(BaseModel):
     total_runs: int
 
 
-@app.get("/heartbeat/status", response_model=HeartbeatStatusResponse)
+@api_router.get("/heartbeat/status", response_model=HeartbeatStatusResponse)
 def get_heartbeat_status():
     """Last heartbeat time, interval, and total run count."""
     interval = int(os.environ.get("HEARTBEAT_INTERVAL_MINUTES", "60"))
@@ -530,7 +704,7 @@ def get_heartbeat_status():
     )
 
 
-@app.get("/heartbeat/sessions")
+@api_router.get("/heartbeat/sessions")
 def get_heartbeat_sessions(limit: int = 50):
     """Heartbeat session ledger — each prompt paired with the agent's response."""
     with get_connection() as conn:
@@ -569,7 +743,7 @@ def get_heartbeat_sessions(limit: int = 50):
     }
 
 
-@app.get("/health")
+@api_router.get("/health")
 def health():
     return {"status": "ok"}
 
@@ -602,13 +776,13 @@ class NotesItemUpdate(BaseModel):
     header_color: str | None = None
 
 
-@app.get("/notes/boards")
+@api_router.get("/notes/boards")
 def get_notes_boards():
     """List all notes boards."""
     return {"boards": list_boards()}
 
 
-@app.post("/notes/boards")
+@api_router.post("/notes/boards")
 def post_notes_board(req: NotesBoardCreate):
     """Create a new notes board."""
     board = create_board(req.name.strip() or "Untitled")
@@ -617,7 +791,7 @@ def post_notes_board(req: NotesBoardCreate):
     return board
 
 
-@app.get("/notes/boards/{board_id}")
+@api_router.get("/notes/boards/{board_id}")
 def get_notes_board(board_id: int):
     """Get a single board."""
     board = get_board(board_id)
@@ -626,7 +800,7 @@ def get_notes_board(board_id: int):
     return board
 
 
-@app.put("/notes/boards/{board_id}")
+@api_router.put("/notes/boards/{board_id}")
 def put_notes_board(board_id: int, req: NotesBoardUpdate):
     """Rename a board."""
     board = update_board(board_id, req.name.strip() or "Untitled")
@@ -635,7 +809,7 @@ def put_notes_board(board_id: int, req: NotesBoardUpdate):
     return board
 
 
-@app.delete("/notes/boards/{board_id}")
+@api_router.delete("/notes/boards/{board_id}")
 def delete_notes_board(board_id: int):
     """Delete a board and all its items. User-only."""
     if not delete_board(board_id):
@@ -643,7 +817,7 @@ def delete_notes_board(board_id: int):
     return {"success": True}
 
 
-@app.get("/notes/boards/{board_id}/items")
+@api_router.get("/notes/boards/{board_id}/items")
 def get_notes_items(board_id: int):
     """List all items on a board."""
     if not get_board(board_id):
@@ -651,7 +825,7 @@ def get_notes_items(board_id: int):
     return {"items": list_items(board_id)}
 
 
-@app.post("/notes/boards/{board_id}/items")
+@api_router.post("/notes/boards/{board_id}/items")
 def post_notes_item(board_id: int, req: NotesItemCreate):
     """Create a new note or checklist item."""
     if not get_board(board_id):
@@ -672,7 +846,7 @@ def post_notes_item(board_id: int, req: NotesItemCreate):
     return item
 
 
-@app.get("/notes/items/{item_id}")
+@api_router.get("/notes/items/{item_id}")
 def get_notes_item(item_id: int):
     """Get a single item."""
     item = get_item(item_id)
@@ -681,7 +855,7 @@ def get_notes_item(item_id: int):
     return item
 
 
-@app.put("/notes/items/{item_id}")
+@api_router.put("/notes/items/{item_id}")
 def put_notes_item(item_id: int, req: NotesItemUpdate):
     """Update an item. AI can use this."""
     item = update_item(
@@ -698,7 +872,7 @@ def put_notes_item(item_id: int, req: NotesItemUpdate):
     return item
 
 
-@app.delete("/notes/items/{item_id}")
+@api_router.delete("/notes/items/{item_id}")
 def delete_notes_item(item_id: int):
     """Delete an item. User-only."""
     if not delete_item(item_id):
@@ -711,7 +885,7 @@ class FinishedItemCreate(BaseModel):
     source_checklist_id: int | None = None
 
 
-@app.get("/notes/boards/{board_id}/finished")
+@api_router.get("/notes/boards/{board_id}/finished")
 def get_notes_finished(board_id: int):
     """List finished items for a board."""
     if not get_board(board_id):
@@ -719,7 +893,7 @@ def get_notes_finished(board_id: int):
     return {"items": list_finished_items(board_id)}
 
 
-@app.post("/notes/boards/{board_id}/finished")
+@api_router.post("/notes/boards/{board_id}/finished")
 def post_notes_finished(board_id: int, req: FinishedItemCreate):
     """Add a finished item (moved from checklist)."""
     if not get_board(board_id):
@@ -730,7 +904,7 @@ def post_notes_finished(board_id: int, req: FinishedItemCreate):
     return item
 
 
-@app.post("/notes/boards/{board_id}/finished/{finished_id}/archive")
+@api_router.post("/notes/boards/{board_id}/finished/{finished_id}/archive")
 def archive_notes_finished(board_id: int, finished_id: int):
     """Archive a finished item (moves to hidden archive, AI can read)."""
     if not get_board(board_id):
@@ -779,7 +953,7 @@ class HindsightRecallRequest(BaseModel):
     query: str
 
 
-@app.post("/notes/boards/{board_id}/summarize")
+@api_router.post("/notes/boards/{board_id}/summarize")
 def notes_summarize_board(board_id: int):
     """Summarize board content via the agent."""
     if not get_board(board_id):
@@ -803,7 +977,7 @@ def notes_summarize_board(board_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/notes/boards/{board_id}/organize")
+@api_router.post("/notes/boards/{board_id}/organize")
 def notes_organize_board(board_id: int):
     """Suggest grouping or layout for board content via the agent."""
     if not get_board(board_id):
@@ -827,7 +1001,7 @@ def notes_organize_board(board_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/notes/hindsight-recall")
+@api_router.post("/notes/hindsight-recall")
 def notes_hindsight_recall(req: HindsightRecallRequest):
     """Run Hindsight recall and return results for the Notes sidebar."""
     query = (req.query or "").strip()
@@ -841,6 +1015,127 @@ def notes_hindsight_recall(req: HindsightRecallRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# === Knowledge Bank (data tab) ===
+
+@api_router.get("/knowledge/status")
+def knowledge_status():
+    """Check if Knowledge Bank is configured and optionally test embedding."""
+    import os
+    configured = kb_is_configured()
+    base_url = os.environ.get("EMBEDDING_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or ""
+    # Mask URL for privacy but show enough to verify (e.g. chutes-qwen-qwen3-embedding-8b)
+    url_hint = base_url.split("//")[-1].split("/")[0][:50] if base_url else ""
+    return {
+        "configured": configured,
+        "embedding_base": url_hint or None,
+    }
+
+
+@api_router.get("/knowledge/files")
+def knowledge_list_files(search: str | None = None):
+    """List knowledge files. Optional ?search= for filename/tag filter."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    return {"files": kb_list_files(search_query=search)}
+
+
+@api_router.post("/knowledge/upload")
+async def knowledge_upload(
+    file: UploadFile = File(...),
+    tags: str = Form(""),
+):
+    """Upload a document (PDF, TXT, DOCX, PPTX, MD). Supports multiple files via repeated file param."""
+    logger.info("POST /knowledge/upload received: filename=%s size=%s", file.filename, file.size)
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    data = await file.read()
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    result = kb_upload_file(data, file.filename or "unknown", tags=tag_list)
+    if not result.get("success"):
+        logger.warning("Knowledge upload failed: %s", result.get("error"))
+        raise HTTPException(status_code=400, detail=result.get("error", "Upload failed"))
+    logger.info("Knowledge upload success: file_id=%s", result.get("file", {}).get("id"))
+    return result
+
+
+@api_router.post("/knowledge/upload-bulk")
+async def knowledge_upload_bulk(
+    files: list[UploadFile] = File(...),
+    tags: str = Form(""),
+):
+    """Upload multiple documents at once."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one file required")
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    results = []
+    for f in files:
+        data = await f.read()
+        result = kb_upload_file(data, f.filename or "unknown", tags=tag_list)
+        results.append({"filename": f.filename, **result})
+    return {"results": results}
+
+
+@api_router.post("/knowledge/upload-url")
+async def knowledge_upload_url(url: str = Form(...), filename: str | None = Form(None)):
+    """Upload content from a URL (HTML or plain text)."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    if not (url and url.strip()):
+        raise HTTPException(status_code=400, detail="URL is required")
+    result = kb_upload_from_url(url.strip(), filename=filename or None)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Upload failed"))
+    return result
+
+
+class KnowledgeTagsUpdate(BaseModel):
+    tags: list[str] = []
+
+
+@api_router.patch("/knowledge/files/{file_id}/tags")
+def knowledge_update_tags(file_id: int, req: KnowledgeTagsUpdate):
+    """Update tags for a file."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    if not kb_update_tags(file_id, req.tags):
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"success": True}
+
+
+@api_router.get("/knowledge/files/{file_id}")
+def knowledge_get_file(file_id: int):
+    """Get full file content (reconstructed from chunks)."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    content = kb_get_content(file_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"content": content}
+
+
+@api_router.get("/knowledge/files/{file_id}/chunks")
+def knowledge_get_chunks(file_id: int):
+    """Get chunks for a file (expand view)."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    chunks = kb_get_chunks(file_id)
+    if not chunks:
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"chunks": chunks}
+
+
+@api_router.delete("/knowledge/files/{file_id}")
+def knowledge_delete_file(file_id: int):
+    """Delete a knowledge file and its chunks."""
+    if not kb_is_configured():
+        raise HTTPException(status_code=503, detail="Knowledge Bank not configured (KNOWLEDGE_DATABASE_URL)")
+    if not kb_delete_file(file_id):
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"success": True}
+
+
 class AnalyzeScreenshotRequest(BaseModel):
     image_data_url: str  # full data URL: "data:image/png;base64,..."
     prompt: str = "Describe in detail what you see on the screen. Note any text, UI elements, open applications, and anything important."
@@ -850,7 +1145,7 @@ class AnalyzeScreenshotResponse(BaseModel):
     description: str
 
 
-@app.post("/analyze-screenshot", response_model=AnalyzeScreenshotResponse)
+@api_router.post("/analyze-screenshot", response_model=AnalyzeScreenshotResponse)
 def analyze_screenshot_endpoint(req: AnalyzeScreenshotRequest):
     """
     Accept a base64-encoded screenshot from the overlay, run it through the
@@ -928,6 +1223,21 @@ def analyze_screenshot_endpoint(req: AnalyzeScreenshotRequest):
         )
 
     return AnalyzeScreenshotResponse(description=description)
+
+
+# Mount API under /api (dashboard expects /api/chat, /api/messages, etc.)
+app.include_router(api_router, prefix="/api")
+
+# Serve built dashboard from same origin (for ngrok: one tunnel to 8000 serves everything)
+_DASHBOARD_DIST = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+if _DASHBOARD_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(_DASHBOARD_DIST), html=True), name="dashboard")
+else:
+    logger.warning(
+        "Dashboard dist not found at %s — run 'cd dashboard && npm run build' to enable. "
+        "Use Vite dev server (npm run dev) for local development.",
+        _DASHBOARD_DIST,
+    )
 
 
 if __name__ == "__main__":

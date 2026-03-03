@@ -41,19 +41,22 @@ BG_SERVICES = [
 # ── Kill helpers ──────────────────────────────────────────────────────────────
 
 def _kill_port(port: int, label: str) -> None:
-    """Kill any process currently listening on the given TCP port."""
+    """Kill any process currently listening on the given TCP port (IPv4 and IPv6)."""
     result = subprocess.run(
-        f'netstat -ano | findstr ":{port} "',
+        f'netstat -ano',
         shell=True, capture_output=True, text=True,
     )
     pids = set()
     for line in result.stdout.splitlines():
         parts = line.strip().split()
         # netstat columns: Proto  Local  Foreign  State  PID
-        if len(parts) >= 2 and f":{port}" in parts[1]:
-            pid = parts[-1]
-            if pid.isdigit() and int(pid) > 4:  # skip PID 0/4 (System)
-                pids.add(pid)
+        # Match ":PORT" at end of local address field (handles IPv4 and IPv6)
+        if len(parts) >= 5 and parts[3] == "LISTENING":
+            local = parts[1]
+            if local.endswith(f":{port}"):
+                pid = parts[4]
+                if pid.isdigit() and int(pid) > 4:
+                    pids.add(pid)
     for pid in pids:
         subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
     if pids:
@@ -123,8 +126,8 @@ def main():
     print("Starting background services...")
     start_background()
 
-    print("Waiting for servers to start...")
-    time.sleep(4)
+    print("Waiting for servers to start (API can take ~10s to load agent)...")
+    time.sleep(10)
     webbrowser.open("http://localhost:5173")
 
     if args.no_chat:

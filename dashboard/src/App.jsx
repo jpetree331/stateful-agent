@@ -718,6 +718,400 @@ function CronTab() {
   )
 }
 
+// ==================== DATA TAB (Knowledge Bank) ====================
+
+function DataTab() {
+  const [files, setFiles] = useState([])
+  const [configured, setConfigured] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [expandedId, setExpandedId] = useState(null)
+  const [chunks, setChunks] = useState({})
+  const [searchQuery, setSearchQuery] = useState('')
+  const [urlInput, setUrlInput] = useState('')
+  const [editingTagsId, setEditingTagsId] = useState(null)
+  const [editingTags, setEditingTags] = useState('')
+  const fileInputRef = useRef(null)
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/knowledge/status`)
+      const data = await res.json()
+      setConfigured(data.configured || false)
+      return data.configured
+    } catch {
+      setConfigured(false)
+      return false
+    }
+  }
+
+  const fetchFiles = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const ok = await fetchStatus()
+      if (!ok) {
+        setFiles([])
+        setError('Knowledge Bank not configured. Set KNOWLEDGE_DATABASE_URL in .env')
+        return
+      }
+      const url = searchQuery.trim()
+        ? `${API_BASE}/knowledge/files?search=${encodeURIComponent(searchQuery.trim())}`
+        : `${API_BASE}/knowledge/files`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error('Failed to fetch files')
+      const data = await res.json()
+      setFiles(data.files || [])
+    } catch (err) {
+      setError(err.message)
+      setFiles([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchFiles()
+  }, [searchQuery])
+
+  const handleUpload = async (e) => {
+    const selectedFiles = e?.target?.files
+    if (!selectedFiles?.length) return
+    setUploading(true)
+    setError(null)
+    const url = selectedFiles.length === 1
+      ? `${API_BASE}/knowledge/upload`
+      : `${API_BASE}/knowledge/upload-bulk`
+    try {
+      if (selectedFiles.length === 1) {
+        const form = new FormData()
+        form.append('file', selectedFiles[0])
+        console.log('[Knowledge Bank] Uploading to', url, 'filename:', selectedFiles[0].name)
+        const res = await fetch(url, { method: 'POST', body: form })
+        console.log('[Knowledge Bank] Response:', res.status, res.statusText, 'Content-Type:', res.headers.get('content-type'))
+        if (!res.ok) {
+          const text = await res.text()
+          let errDetail = res.statusText
+          try {
+            const parsed = JSON.parse(text)
+            errDetail = parsed.detail || errDetail
+          } catch {
+            if (text.includes('<!doctype') || text.includes('<html')) {
+              errDetail = `Request got ${res.status} — not reaching API. Check Vite proxy (dashboard/vite.config.js) forwards /api to localhost:8000.`
+              console.warn('[Knowledge Bank] Got HTML instead of JSON:', text.slice(0, 100) + '...')
+            } else if (text.length < 200) {
+              errDetail = text
+            }
+          }
+          throw new Error(errDetail)
+        }
+      } else {
+        const form = new FormData()
+        for (let i = 0; i < selectedFiles.length; i++) form.append('files', selectedFiles[i])
+        console.log('[Knowledge Bank] Bulk upload to', url, 'files:', selectedFiles.length)
+        const res = await fetch(url, { method: 'POST', body: form })
+        console.log('[Knowledge Bank] Response:', res.status, res.statusText, 'Content-Type:', res.headers.get('content-type'))
+        if (!res.ok) {
+          const text = await res.text()
+          let errDetail = res.statusText
+          try {
+            const parsed = JSON.parse(text)
+            errDetail = parsed.detail || errDetail
+          } catch {
+            if (text.includes('<!doctype') || text.includes('<html')) {
+              errDetail = `Request got ${res.status} — not reaching API. Check Vite proxy (dashboard/vite.config.js) forwards /api to localhost:8000.`
+              console.warn('[Knowledge Bank] Got HTML instead of JSON:', text.slice(0, 100) + '...')
+            } else if (text.length < 200) {
+              errDetail = text
+            }
+          }
+          throw new Error(errDetail)
+        }
+        const data = await res.json()
+        const failed = data.results?.filter(r => !r.success)
+        if (failed?.length) setError(`${failed.length} file(s) failed: ${failed.map(f => f.error).join('; ')}`)
+      }
+      fetchFiles()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleUploadUrl = async () => {
+    try {
+      setUploading(true)
+      setError(null)
+      const form = new FormData()
+      form.append('url', urlInput.trim())
+      const res = await fetch(`${API_BASE}/knowledge/upload-url`, { method: 'POST', body: form })
+      if (!res.ok) {
+        const text = await res.text()
+        let errDetail = res.statusText
+        try {
+          const parsed = JSON.parse(text)
+          errDetail = parsed.detail || errDetail
+        } catch {
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            errDetail = `Request got ${res.status} — not reaching API. Check Vite proxy forwards /api to localhost:8000.`
+          } else if (text.length < 200) errDetail = text
+        }
+        throw new Error(errDetail)
+      }
+      setUrlInput('')
+      fetchFiles()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleSaveTags = async (id) => {
+    const tags = editingTags.split(',').map(t => t.trim()).filter(Boolean)
+    try {
+      const res = await fetch(`${API_BASE}/knowledge/files/${id}/tags`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags }),
+      })
+      if (!res.ok) throw new Error('Failed to update tags')
+      setEditingTagsId(null)
+      fetchFiles()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleExpand = async (id) => {
+    if (chunks[id]) {
+      setExpandedId(expandedId === id ? null : id)
+      return
+    }
+    try {
+      const res = await fetch(`${API_BASE}/knowledge/files/${id}/chunks`)
+      if (!res.ok) throw new Error('Failed to fetch chunks')
+      const data = await res.json()
+      setChunks(prev => ({ ...prev, [id]: data.chunks }))
+      setExpandedId(id)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleDownload = async (id, filename) => {
+    try {
+      const res = await fetch(`${API_BASE}/knowledge/files/${id}`)
+      if (!res.ok) throw new Error('Failed to download')
+      const data = await res.json()
+      const blob = new Blob([data.content], { type: 'text/plain' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = filename || 'document.txt'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this file from the Knowledge Bank?')) return
+    try {
+      const res = await fetch(`${API_BASE}/knowledge/files/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete')
+      fetchFiles()
+      if (expandedId === id) setExpandedId(null)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const formatSize = (bytes) => {
+    if (bytes == null || isNaN(bytes)) return '—'
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-100">Knowledge Bank</h2>
+          <p className="text-sm text-slate-400 mt-1">
+            Upload documents (PDF, TXT, DOCX, PPTX, MD). The agent can search them when you ask questions.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.txt,.docx,.pptx,.md"
+            multiple
+            onChange={handleUpload}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!configured || uploading}
+            className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {uploading ? 'Uploading…' : 'Upload'}
+          </button>
+          <button
+            onClick={fetchFiles}
+            className="text-sm text-emerald-400 hover:text-emerald-300 px-3 py-1.5 rounded-lg border border-emerald-500/30"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Search + URL upload */}
+      {configured && (
+        <div className="space-y-3">
+          <input
+            type="text"
+            placeholder="Search by filename or tag..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg bg-slate-800/80 border border-slate-700 px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+          />
+          <div className="flex gap-2">
+            <input
+              type="url"
+              placeholder="https://example.com/article (HTML or plain text)"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUploadUrl()}
+              className="flex-1 rounded-lg bg-slate-800/80 border border-slate-700 px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+            />
+            <button
+              onClick={handleUploadUrl}
+              disabled={!urlInput.trim() || uploading}
+              className="px-4 py-2 rounded-lg bg-slate-700 text-slate-200 text-sm font-medium hover:bg-slate-600 disabled:opacity-50"
+            >
+              Add from URL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-900/20 border border-red-500/30 rounded-lg px-4 py-3 text-red-300 text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-12 text-slate-400">Loading…</div>
+      ) : !configured ? (
+        <div className="bg-slate-800/30 rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">
+          <p>Set KNOWLEDGE_DATABASE_URL and create the <code className="text-slate-300">agent-data</code> database with pgvector.</p>
+          <p className="text-sm mt-2">See .env.example for setup instructions.</p>
+        </div>
+      ) : files.length === 0 ? (
+        <div className="bg-slate-800/30 rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">
+          <p>{searchQuery ? 'No matching documents.' : 'No documents yet. Upload PDF, TXT, DOCX, PPTX, or MD files.'}</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {files.map((f) => (
+            <div
+              key={f.id}
+              className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-slate-100 truncate">{f.filename}</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {formatSize(f.size_bytes)} · {f.chunk_count} chunks · searched {f.search_count}×
+                  </p>
+                  {f.uploaded_at && (
+                    <p className="text-xs text-slate-600 mt-0.5">{formatDate(f.uploaded_at)}</p>
+                  )}
+                  {(f.tags?.length > 0 || editingTagsId === f.id) && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {editingTagsId === f.id ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editingTags}
+                            onChange={(e) => setEditingTags(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') setEditingTagsId(null)
+                              if (e.key === 'Enter') handleSaveTags(f.id)
+                            }}
+                            placeholder="tag1, tag2"
+                            className="flex-1 min-w-[120px] rounded bg-slate-900 px-2 py-1 text-sm text-slate-100"
+                            autoFocus
+                          />
+                          <button onClick={() => handleSaveTags(f.id)} className="text-xs text-emerald-400">Save</button>
+                          <button onClick={() => setEditingTagsId(null)} className="text-xs text-slate-400">Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          {(f.tags || []).map((t) => (
+                            <span key={t} className="inline-flex items-center rounded bg-slate-700/80 px-2 py-0.5 text-xs text-slate-300">
+                              {t}
+                            </span>
+                          ))}
+                          <button onClick={() => { setEditingTagsId(f.id); setEditingTags((f.tags || []).join(', ')) }} className="text-xs text-slate-500 hover:text-slate-300">
+                            Edit
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {(!f.tags?.length && editingTagsId !== f.id) && (
+                    <button onClick={() => { setEditingTagsId(f.id); setEditingTags('') }} className="mt-2 text-xs text-slate-500 hover:text-slate-300">
+                      + Add tags
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-2 ml-2">
+                  <button
+                    onClick={() => handleExpand(f.id)}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded"
+                  >
+                    {expandedId === f.id ? 'Collapse' : 'Expand'}
+                  </button>
+                  <button
+                    onClick={() => handleDownload(f.id, f.filename)}
+                    className="text-xs text-slate-300 hover:text-slate-100 px-2 py-1 rounded"
+                  >
+                    Download
+                  </button>
+                  <button
+                    onClick={() => handleDelete(f.id)}
+                    className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+              {expandedId === f.id && chunks[f.id] && (
+                <div className="mt-4 pt-4 border-t border-slate-700/50 space-y-3">
+                  {chunks[f.id].map((c, i) => (
+                    <div key={c.id} className="bg-slate-900/50 rounded-lg p-3 text-sm text-slate-300">
+                      <span className="text-slate-500 text-xs">Chunk {c.chunk_index + 1}</span>
+                      <pre className="mt-1 whitespace-pre-wrap font-sans">{c.content}</pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ==================== CORE MEMORY COMPONENTS ====================
 
 // Core Memory Block Component
@@ -931,25 +1325,48 @@ function CoreMemoryTab() {
 // ==================== CHAT COMPONENTS ====================
 
 // Chat Tab Component
+const ACCEPTED_FILE_TYPES = '.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.pptx,.docx,.md'
+
 function ChatTab() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState([])
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [error, setError] = useState(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const messagesEndRef = useRef(null)
+  const messagesContainerRef = useRef(null)
   const loadingRef = useRef(false)
   const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
   const emojiPickerRef = useRef(null)
+  const userJustSentRef = useRef(false)
+  const wasNearBottomRef = useRef(true)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const isNearBottom = (el, threshold = 120) => {
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
+  }
+
   useEffect(() => {
-    scrollToBottom()
+    // Only auto-scroll when: user just sent a message (waiting for reply), or they were already at bottom
+    if (userJustSentRef.current || loadingRef.current || wasNearBottomRef.current) {
+      scrollToBottom()
+    }
+    userJustSentRef.current = false
   }, [messages])
+
+  // Reset textarea height when input is cleared
+  useEffect(() => {
+    if (!input && inputRef.current) {
+      inputRef.current.style.height = 'auto'
+    }
+  }, [input])
 
   // Close emoji picker when clicking outside
   useEffect(() => {
@@ -992,21 +1409,55 @@ function ChatTab() {
 
   const sendMessage = async () => {
     const text = input.trim()
-    if (!text || loading) return
+    const hasFiles = attachments.length > 0
+    if ((!text && !hasFiles) || loading) return
+
+    const displayText = text || (hasFiles ? `[${attachments.length} file(s) attached]` : '')
+
+    // Build preview data for images before clearing attachments
+    const attachmentPreviews = await Promise.all(
+      attachments.map((f) => {
+        const isImage = f.type.startsWith('image/')
+        if (!isImage) return Promise.resolve({ name: f.name, type: f.type, isImage: false })
+        return new Promise((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (e) => resolve({ name: f.name, type: f.type, isImage: true, dataUrl: e.target.result })
+          reader.onerror = () => resolve({ name: f.name, type: f.type, isImage: false })
+          reader.readAsDataURL(f)
+        })
+      })
+    )
 
     setInput('')
+    setAttachments([])
     setError(null)
     loadingRef.current = true
     setLoading(true)
-    // Optimistically show user message while waiting for LLM
-    setMessages((prev) => [...prev, { role: 'user', content: text, metadata: { role_display: 'User' } }])
+    userJustSentRef.current = true
+    setMessages((prev) => [...prev, {
+      role: 'user',
+      content: displayText,
+      metadata: { role_display: 'User', attachments: attachmentPreviews },
+    }])
 
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, thread_id: 'main' }),
-      })
+      let res
+      if (hasFiles) {
+        const form = new FormData()
+        form.append('message', text)
+        form.append('thread_id', 'main')
+        attachments.forEach((f) => form.append('files', f))
+        res = await fetch(`${API_BASE}/chat/upload`, {
+          method: 'POST',
+          body: form,
+        })
+      } else {
+        res = await fetch(`${API_BASE}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, thread_id: 'main' }),
+        })
+      }
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -1039,13 +1490,34 @@ function ChatTab() {
     }
   }
 
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files || [])
+    const valid = files.filter((f) => {
+      const ext = '.' + (f.name || '').split('.').pop().toLowerCase()
+      return ACCEPTED_FILE_TYPES.split(',').includes(ext)
+    })
+    setAttachments((prev) => [...prev, ...valid])
+    e.target.value = ''
+  }
+
+  const removeAttachment = (idx) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   const visibleMessages = messages.filter((m) => m.role !== 'tool' && m.metadata?.role_display !== 'heartbeat')
 
   return (
-    <>
+    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
       {/* Messages */}
-      <main className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="max-w-2xl mx-auto space-y-6">
+      <main
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6"
+        onScroll={() => {
+          const el = messagesContainerRef.current
+          wasNearBottomRef.current = el ? isNearBottom(el) : true
+        }}
+      >
+        <div className="max-w-2xl mx-auto space-y-6 overflow-x-hidden min-w-0">
           {!historyLoaded ? (
             <div className="flex items-center justify-center h-32">
               <span className="text-slate-400">Loading conversation...</span>
@@ -1098,7 +1570,39 @@ function ChatTab() {
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <p className="whitespace-pre-wrap break-words">{msg.content ?? msg.error}</p>
+                    <div>
+                      {msg.metadata?.attachments?.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {msg.metadata.attachments.map((att, ai) =>
+                            att.isImage && att.dataUrl ? (
+                              <img
+                                key={ai}
+                                src={att.dataUrl}
+                                alt={att.name}
+                                title={att.name}
+                                className="h-20 w-20 rounded-lg object-cover border border-white/20 cursor-pointer hover:opacity-90"
+                                onClick={() => window.open(att.dataUrl, '_blank')}
+                              />
+                            ) : (
+                              <div
+                                key={ai}
+                                className="flex items-center gap-1.5 rounded-lg bg-white/10 px-2 py-1.5 text-xs text-white/80"
+                                title={att.name}
+                              >
+                                <span>📎</span>
+                                <span className="max-w-[120px] truncate">{att.name}</span>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+                      {msg.content && msg.content !== `[${msg.metadata?.attachments?.length} file(s) attached]` && (
+                        <p className="whitespace-pre-wrap break-words">{msg.content ?? msg.error}</p>
+                      )}
+                      {!msg.content && !msg.metadata?.attachments?.length && (
+                        <p className="whitespace-pre-wrap break-words">{msg.error}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1122,18 +1626,62 @@ function ChatTab() {
 
       {/* Input */}
       <footer className="border-t border-slate-800 px-6 py-4">
-        <div className="max-w-2xl mx-auto flex gap-3 relative">
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            disabled={loading}
-            className="flex-1 rounded-xl bg-slate-800/80 border border-slate-700 px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 disabled:opacity-50"
-          />
-          {/* Emoji picker */}
+        <div className="max-w-2xl mx-auto flex flex-col gap-2">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((f, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-lg bg-slate-700/80 px-2 py-1 text-sm text-slate-200"
+                >
+                  {f.name}
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="text-slate-400 hover:text-red-400"
+                    aria-label="Remove"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-3 items-end">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_FILE_TYPES}
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              className="shrink-0 rounded-xl bg-slate-800 border border-slate-700 px-3 py-3 text-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
+              title="Add files (images, PDF, DOCX, etc.)"
+            >
+              +
+            </button>
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value)
+                const ta = e.target
+                ta.style.height = 'auto'
+                ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message..."
+              disabled={loading}
+              rows={1}
+              className="flex-1 min-h-[44px] max-h-[200px] rounded-xl bg-slate-800/80 border border-slate-700 px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 disabled:opacity-50 overflow-y-auto"
+              style={{ resize: 'none' }}
+            />
+            {/* Emoji picker */}
           <div className="relative" ref={emojiPickerRef}>
             <button
               type="button"
@@ -1158,19 +1706,20 @@ function ChatTab() {
               </div>
             )}
           </div>
-          <button
-            onClick={sendMessage}
-            disabled={loading || !input.trim()}
-            className="rounded-xl bg-emerald-600 px-5 py-3 font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            Send
-          </button>
+            <button
+              onClick={sendMessage}
+              disabled={loading || (!input.trim() && attachments.length === 0)}
+              className="shrink-0 rounded-xl bg-emerald-600 px-5 py-3 font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Send
+            </button>
+          </div>
         </div>
         {error && (
           <p className="max-w-2xl mx-auto mt-2 text-sm text-red-400">{error}</p>
         )}
       </footer>
-    </>
+    </div>
   )
 }
 
@@ -1411,6 +1960,7 @@ const TABS = [
   { id: 'chat', label: 'Chat' },
   { id: 'core', label: 'Core' },
   { id: 'cron', label: 'Cron' },
+  { id: 'data', label: 'Data' },
   { id: 'heartbeat', label: 'Hbeat' },
   { id: 'notes', label: 'Notes' },
   { id: 'tools', label: 'Tools' },
@@ -1451,7 +2001,9 @@ function App() {
         {/* Main Content */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeTab === 'chat' ? (
-            <ChatTab />
+            <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+              <ChatTab />
+            </div>
           ) : activeTab === 'notes' ? (
             <NotesTab />
           ) : activeTab === 'core' ? (
@@ -1461,6 +2013,10 @@ function App() {
           ) : activeTab === 'cron' ? (
             <main className="flex-1 overflow-y-auto px-6 py-6">
               <CronTab />
+            </main>
+          ) : activeTab === 'data' ? (
+            <main className="flex-1 overflow-y-auto px-6 py-6">
+              <DataTab />
             </main>
           ) : activeTab === 'tools' ? (
             <main className="flex-1 overflow-y-auto px-6 py-6">

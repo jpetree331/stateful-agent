@@ -148,6 +148,68 @@ def discord_read_messages(channel_id: str = "", limit: int = 10) -> str:
 
 
 @tool
+def discord_send_file(file_path: str, channel_id: str = "", message: str = "") -> str:
+    """
+    Send a file (image, PDF, document, etc.) to a Discord channel.
+
+    Use to share screenshots, reports, documents, or any file with the user on Discord.
+    Supports any file type Discord allows (images, PDFs, text files, etc., up to 8MB).
+
+    Args:
+        file_path: Absolute path to the file to send.
+        channel_id: Discord channel ID. Leave blank for DISCORD_CHANNEL_ID from .env.
+        message: Optional text message to accompany the file.
+    """
+    from pathlib import Path
+
+    err = _require_token()
+    if err:
+        return err
+
+    cid = channel_id.strip() or DISCORD_DEFAULT_CHANNEL_ID
+    if not cid:
+        return "Error: provide a channel_id or set DISCORD_CHANNEL_ID in .env."
+
+    path = Path(file_path).expanduser().resolve()
+    if not path.exists():
+        return f"Error: file not found: {path}"
+    if not path.is_file():
+        return f"Error: not a file: {path}"
+
+    size_mb = path.stat().st_size / (1024 * 1024)
+    if size_mb > 8:
+        return f"Error: file is {size_mb:.1f} MB — Discord free tier limit is 8 MB."
+
+    try:
+        import mimetypes
+        mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        with open(path, "rb") as f:
+            files = {"file": (path.name, f, mime)}
+            data = {}
+            if message:
+                import json
+                data["payload_json"] = json.dumps({"content": message})
+            headers = {
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                "User-Agent": "LangGraphAgent/1.0",
+            }
+            resp = httpx.post(
+                f"{_BASE}/channels/{cid}/messages",
+                files=files,
+                data=data,
+                headers=headers,
+                timeout=60,
+            )
+        resp.raise_for_status()
+        msg = resp.json()
+        return f"File '{path.name}' sent to Discord channel {cid} (message ID: {msg.get('id', '?')})."
+    except httpx.HTTPStatusError as e:
+        return f"Discord API error {e.response.status_code}: {e.response.text[:300]}"
+    except Exception as e:
+        return f"Discord send file failed: {e}"
+
+
+@tool
 def discord_get_channel_info(channel_id: str = "") -> str:
     """
     Get information about a Discord channel (name, topic, server, type).

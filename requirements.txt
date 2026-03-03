@@ -36,8 +36,14 @@ discord.py>=2.3
 # Windows toast notifications (properly registers AUMID via Start Menu shortcut)
 winotify>=1.1
 
-# Document reading
+# Document reading (PDF, DOCX, PPTX for Discord attachments)
 pypdf>=4.0
+python-docx>=1.0
+python-pptx>=0.6
+
+# Knowledge Bank: pgvector for embeddings, tiktoken for chunking
+pgvector>=0.2
+tiktoken>=0.5
 
 # YouTube transcript fetching (no API key needed)
 youtube-transcript-api>=0.6
