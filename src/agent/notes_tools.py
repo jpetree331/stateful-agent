@@ -114,11 +114,11 @@ def notes_read(board_id: int | None = None) -> str:
 @tool
 def notes_search(query: str, board_id: int | None = None, limit: int = 20) -> str:
     """
-    Search notes, finished items, and archived items by keyword.
+    Search notes, finished items, archived items, and deleted notes by keyword.
 
     Use when the user asks about something specific in their notes, or when you need
     to find items matching a topic. Searches across note content, checklist items,
-    finished to-dos, and archived items.
+    finished to-dos, archived items, and soft-deleted notes/checklists.
 
     Args:
         query: Search term (case-insensitive).
@@ -203,8 +203,37 @@ def notes_search(query: str, board_id: int | None = None, limit: int = 20) -> st
                     f"[ARCHIVED] Board '{board_name}': {r['text']} (archived {r['archived_at']})"
                 )
 
+            # Search deleted items (soft-deleted notes/checklists)
+            cur.execute(
+                """
+                SELECT nd.id, nd.board_id, nb.name AS board_name, nd.item_type, nd.content, nd.deleted_at
+                FROM notes_deleted_items nd
+                LEFT JOIN notes_boards nb ON nb.id = nd.board_id
+                WHERE nd.content::text ILIKE %s
+                  AND (%s IS NULL OR nd.board_id = %s)
+                  AND (nd.board_id != %s OR %s IS NULL)
+                ORDER BY nd.deleted_at DESC
+                LIMIT %s
+                """,
+                (pattern, board_id, board_id, private_id, private_id, limit),
+            )
+            for r in cur.fetchall():
+                content = r.get("content") or {}
+                if r["item_type"] == "note":
+                    text = _strip_html(content.get("html", ""))
+                elif r["item_type"] == "checklist":
+                    items = content.get("items") or []
+                    text = " | ".join((it.get("text") or "").strip() for it in items)
+                else:
+                    text = _strip_html(content.get("html", "")) or (content.get("markdown") or "")
+                board_name = r["board_name"] or f"Board {r['board_id']}"
+                preview = (text[:200] + "...") if len(text) > 200 else text
+                results.append(
+                    f"[DELETED] Board '{board_name}': {preview} (deleted {r['deleted_at']})"
+                )
+
     if not results:
-        return f"No notes, finished, or archived items found matching '{query}'."
+        return f"No notes, finished, archived, or deleted items found matching '{query}'."
     return "\n".join(results[:limit])
 
 

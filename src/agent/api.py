@@ -73,6 +73,15 @@ from .telegram_listener import (
     stop_telegram_listener,
 )
 from .db import check_connection, get_connection, load_messages, setup_schema
+from .journal import (
+    is_configured as journal_is_configured,
+    ensure_schema as journal_ensure_schema,
+    get_months_with_entries,
+    get_entries_for_month,
+    save_user_note,
+    update_user_note as journal_update_user_note,
+    delete_entry as journal_delete_entry,
+)
 from .graph import build_agent, chat, _get_last_ai_content, get_tool_list_for_api
 from .notes import (
     list_boards,
@@ -88,6 +97,9 @@ from .notes import (
     list_finished_items,
     add_finished_item,
     archive_finished_item,
+    list_deleted_items,
+    restore_deleted_item,
+    get_deleted_pages_info,
 )
 from .hindsight import recall as hindsight_recall
 from .knowledge_bank import (
@@ -106,6 +118,12 @@ from .knowledge_bank import (
 async def lifespan(app: FastAPI):
     setup_schema()
     check_connection()
+    # Initialize journal schema (best-effort — doesn't fail startup if local DB unavailable)
+    try:
+        if journal_is_configured():
+            journal_ensure_schema()
+    except Exception as _je:
+        logger.warning("Journal schema init failed (non-fatal): %s", _je)
     app.state.agent = build_agent()
     # Start background services
     start_scheduler()
@@ -885,6 +903,35 @@ class FinishedItemCreate(BaseModel):
     source_checklist_id: int | None = None
 
 
+@api_router.get("/notes/boards/{board_id}/deleted")
+def get_notes_deleted(board_id: int, period: str = "week", page: int = 0):
+    """List deleted (saved) items for a board with pagination by week or month."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    if period not in ("week", "month"):
+        period = "week"
+    return list_deleted_items(board_id, period=period, page=max(0, page))
+
+
+@api_router.get("/notes/boards/{board_id}/deleted/pages")
+def get_notes_deleted_pages(board_id: int):
+    """Get pagination info for deleted items (weeks/months count)."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    return get_deleted_pages_info(board_id)
+
+
+@api_router.post("/notes/boards/{board_id}/deleted/{deleted_id}/restore")
+def restore_notes_deleted(board_id: int, deleted_id: int):
+    """Restore a deleted item back to the board."""
+    if not get_board(board_id):
+        raise HTTPException(status_code=404, detail="Board not found")
+    item = restore_deleted_item(deleted_id, board_id=board_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Deleted item not found")
+    return item
+
+
 @api_router.get("/notes/boards/{board_id}/finished")
 def get_notes_finished(board_id: int):
     """List finished items for a board."""
@@ -1223,6 +1270,142 @@ def analyze_screenshot_endpoint(req: AnalyzeScreenshotRequest):
         )
 
     return AnalyzeScreenshotResponse(description=description)
+
+
+# === Journal ===
+
+class JournalNoteRequest(BaseModel):
+    content: str
+    title: str | None = None
+    entry_date: str | None = None  # YYYY-MM-DD, defaults to today
+
+
+class JournalNoteUpdateRequest(BaseModel):
+    content: str
+    title: str | None = None
+    append: bool = False  # if True, append to existing content
+
+
+@api_router.get("/journal/status")
+def journal_status():
+    """Check if journal is available (requires KNOWLEDGE_DATABASE_URL)."""
+    configured = journal_is_configured()
+    if configured:
+        try:
+            journal_ensure_schema()
+        except Exception as e:
+            return {"configured": False, "error": str(e)}
+    return {"configured": configured}
+
+
+@api_router.get("/journal/months")
+def journal_months():
+    """List months that have journal entries, newest first (YYYY-MM strings)."""
+    if not journal_is_configured():
+        raise HTTPException(status_code=503, detail="Journal not configured (KNOWLEDGE_DATABASE_URL)")
+    return {"months": get_months_with_entries()}
+
+
+@api_router.get("/journal/month/{year_month}")
+def journal_month(year_month: str):
+    """
+    Get all journal entries for a month (YYYY-MM).
+    Returns days newest-first, each with list of entries sorted by created_at.
+    """
+    if not journal_is_configured():
+        raise HTTPException(status_code=503, detail="Journal not configured (KNOWLEDGE_DATABASE_URL)")
+    import re
+    if not re.match(r"^\d{4}-\d{2}$", year_month):
+        raise HTTPException(status_code=400, detail="year_month must be YYYY-MM")
+    days = get_entries_for_month(year_month)
+    return {"year_month": year_month, "days": days}
+
+
+@api_router.get("/journal/day/{date_str}/messages")
+def journal_day_messages(date_str: str):
+    """
+    Get chat messages for a specific day (YYYY-MM-DD) from Railway Postgres.
+    Returns user + assistant messages only (no heartbeat, no tool messages).
+    """
+    import re
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    try:
+        EST = ZoneInfo("America/New_York")
+        day_start = datetime.fromisoformat(date_str).replace(tzinfo=EST)
+        day_end = day_start + timedelta(days=1)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role, content, created_at, metadata
+                    FROM messages
+                    WHERE thread_id = 'main'
+                      AND role IN ('user', 'assistant')
+                      AND (metadata->>'role_display' IS NULL OR metadata->>'role_display' NOT IN ('heartbeat', 'cron'))
+                      AND created_at >= %s AND created_at < %s
+                    ORDER BY created_at ASC
+                    """,
+                    (day_start, day_end),
+                )
+                rows = cur.fetchall()
+        messages = [
+            {
+                "role": r["role"],
+                "content": r["content"],
+                "created_at": r["created_at"].isoformat(),
+                "metadata": dict(r["metadata"] or {}),
+            }
+            for r in rows
+        ]
+        return {"date": date_str, "messages": messages}
+    except Exception as e:
+        logger.exception("journal_day_messages failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/journal/notes")
+def journal_create_note(req: JournalNoteRequest):
+    """Create a user journal note."""
+    if not journal_is_configured():
+        raise HTTPException(status_code=503, detail="Journal not configured (KNOWLEDGE_DATABASE_URL)")
+    if not req.content or not req.content.strip():
+        raise HTTPException(status_code=400, detail="content is required")
+    from datetime import date
+    edate = None
+    if req.entry_date:
+        try:
+            edate = date.fromisoformat(req.entry_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="entry_date must be YYYY-MM-DD")
+    entry_id = save_user_note(req.content, title=req.title, entry_date=edate)
+    if entry_id is None:
+        raise HTTPException(status_code=500, detail="Failed to save note")
+    return {"success": True, "id": entry_id}
+
+
+@api_router.patch("/journal/entries/{entry_id}")
+def journal_update_entry(entry_id: int, req: JournalNoteUpdateRequest):
+    """Update a user journal note (user_note only)."""
+    if not journal_is_configured():
+        raise HTTPException(status_code=503, detail="Journal not configured (KNOWLEDGE_DATABASE_URL)")
+    if not req.content or not req.content.strip():
+        raise HTTPException(status_code=400, detail="content is required")
+    if not journal_update_user_note(entry_id, req.content, title=req.title, append=req.append):
+        raise HTTPException(status_code=404, detail="Entry not found or not a user note")
+    return {"success": True}
+
+
+@api_router.delete("/journal/entries/{entry_id}")
+def journal_delete(entry_id: int):
+    """Delete a journal entry."""
+    if not journal_is_configured():
+        raise HTTPException(status_code=503, detail="Journal not configured (KNOWLEDGE_DATABASE_URL)")
+    if not journal_delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"success": True}
 
 
 # Mount API under /api (dashboard expects /api/chat, /api/messages, etc.)

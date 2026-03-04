@@ -142,6 +142,26 @@ def run_heartbeat(
         channel_type="internal",
         is_group_chat=False,
     )
+
+    # Save heartbeat output to journal (use last_ai_content from chat, fallback to DB)
+    try:
+        from .db import get_last_assistant_content
+        from .graph import _get_last_ai_content
+        from .journal import save_heartbeat_output
+        output = (
+            result.get("last_ai_content")
+            or _get_last_ai_content(result.get("messages", []))
+            or get_last_assistant_content(thread_id, within_minutes=2)
+        )
+        if output:
+            save_heartbeat_output(
+                content=output,
+                cron_name=None,
+                created_at=current_time,
+            )
+    except Exception as _je:
+        logger.warning("Journal save failed for heartbeat: %s", _je)
+
     return result
 
 

@@ -156,7 +156,7 @@ def _run_cron_job_sync(job: dict) -> None:
 
     current_time = datetime.now(AGENT_TIMEZONE)
 
-    chat(
+    result = chat(
         agent,
         thread_id="main",
         user_message=cron_prompt,
@@ -166,6 +166,25 @@ def _run_cron_job_sync(job: dict) -> None:
         channel_type="internal",
         is_group_chat=False,
     )
+
+    # Save output to journal (use last_ai_content from chat, fallback to DB)
+    try:
+        from .db import get_last_assistant_content
+        from .graph import _get_last_ai_content
+        from .journal import save_heartbeat_output
+        output = (
+            result.get("last_ai_content")
+            or _get_last_ai_content(result.get("messages", []))
+            or get_last_assistant_content("main", within_minutes=2)
+        )
+        if output:
+            save_heartbeat_output(
+                content=output,
+                cron_name=job.get("name"),
+                created_at=current_time,
+            )
+    except Exception as _je:
+        logger.warning("Journal save failed for cron job %s: %s", job_id, _je)
 
     record_run(job_id, "success")
     logger.info(f"Cron job {job_id} completed successfully")

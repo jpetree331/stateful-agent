@@ -290,6 +290,179 @@ def update_item(
     return _row_to_item(r)
 
 
+def _deleted_title_or_preview(content: dict | None, item_type: str) -> str:
+    """Get title or initial words for a deleted item."""
+    content = content or {}
+    title = (content.get("title") or "").strip()
+    if title:
+        return title
+    if item_type == "note":
+        html = content.get("html", "")
+        text = _strip_html(html)
+    elif item_type == "checklist":
+        items = content.get("items") or []
+        parts = [(it.get("text") or "").strip() for it in items if (it.get("text") or "").strip()]
+        text = " ".join(parts)
+    else:
+        text = _strip_html(content.get("html", "")) or (content.get("markdown") or "")
+    return (text[:60] + "…") if len(text) > 60 else text or "(empty)"
+
+
+def list_deleted_items(
+    board_id: int,
+    *,
+    period: str = "week",
+    page: int = 0,
+) -> dict:
+    """
+    List deleted items for a board with pagination by week or month.
+    Returns { items, has_more, period, page, window_start, window_end }.
+    Items sorted by deleted_at DESC (most recent deletion first).
+    page 0 = most recent week/month, page 1 = previous, etc.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+    if period == "month":
+        # page 0 = current month, page 1 = last month, ...
+        month_offset = page
+        y, m = now.year, now.month
+        for _ in range(month_offset):
+            m -= 1
+            if m < 1:
+                m = 12
+                y -= 1
+        window_start = datetime(y, m, 1, tzinfo=tz)
+        if m == 12:
+            window_end = datetime(y + 1, 1, 1, tzinfo=tz)
+        else:
+            window_end = datetime(y, m + 1, 1, tzinfo=tz)
+    else:
+        # page 0 = this week (Mon-Sun), page 1 = last week, ...
+        week_start = now - timedelta(days=now.weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        window_end = week_start + timedelta(days=7 * (1 - page))
+        window_start = week_start - timedelta(days=7 * page)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, board_id, item_type, content, position, size,
+                       background_color, header_color, created_at, deleted_at
+                FROM notes_deleted_items
+                WHERE board_id = %s
+                  AND deleted_at >= %s AND deleted_at < %s
+                ORDER BY deleted_at DESC, created_at DESC
+                LIMIT 101
+                """,
+                (board_id, window_start, window_end),
+            )
+            rows = cur.fetchall()
+    items = []
+    for r in rows[:100]:
+        content = r.get("content") or {}
+        items.append({
+            "id": r["id"],
+            "board_id": r["board_id"],
+            "item_type": r["item_type"],
+            "title_or_preview": _deleted_title_or_preview(content, r["item_type"]),
+            "content": content,
+            "position": r["position"] or {"x": 0, "y": 0},
+            "size": r["size"] or {"width": 200, "height": 180},
+            "background_color": r["background_color"] or "#fef08a",
+            "header_color": r["header_color"] or "#eab308",
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "deleted_at": r["deleted_at"].isoformat() if r["deleted_at"] else None,
+        })
+    return {
+        "items": items,
+        "has_more": len(rows) > 100,
+        "period": period,
+        "page": page,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+    }
+
+
+def get_deleted_pages_info(board_id: int) -> dict:
+    """Get available week/month ranges for pagination."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("America/New_York")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT MIN(deleted_at) AS first, MAX(deleted_at) AS last
+                FROM notes_deleted_items
+                WHERE board_id = %s
+                """,
+                (board_id,),
+            )
+            r = cur.fetchone()
+    if not r or not r["first"]:
+        return {"weeks": 0, "months": 0}
+    first = r["first"]
+    last = r["last"]
+    if isinstance(first, str):
+        first = datetime.fromisoformat(first.replace("Z", "+00:00")).astimezone(tz)
+    if isinstance(last, str):
+        last = datetime.fromisoformat(last.replace("Z", "+00:00")).astimezone(tz)
+    weeks = max(0, (last - first).days // 7 + 1)
+    months = max(0, (last.year - first.year) * 12 + (last.month - first.month) + 1)
+    return {"weeks": weeks, "months": months}
+
+
+def restore_deleted_item(deleted_id: int, board_id: int | None = None) -> dict | None:
+    """
+    Restore a deleted item back to its board.
+    Copies from notes_deleted_items to notes_items, then removes from deleted.
+    If board_id is given, verifies the deleted item belongs to that board.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT board_id, item_type, content, position, size,
+                       background_color, header_color
+                FROM notes_deleted_items
+                WHERE id = %s
+                """,
+                (deleted_id,),
+            )
+            r = cur.fetchone()
+    if not r:
+        return None
+    if board_id is not None and r["board_id"] != board_id:
+        return None
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO notes_items
+                    (board_id, item_type, content, position, size, background_color, header_color)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, board_id, item_type, content, position, size,
+                          background_color, header_color, created_at, updated_at
+                """,
+                (
+                    r["board_id"],
+                    r["item_type"],
+                    Jsonb(r["content"] or {}),
+                    Jsonb(r["position"] or {"x": 0, "y": 0}),
+                    Jsonb(r["size"] or {"width": 200, "height": 180}),
+                    r["background_color"] or "#fef08a",
+                    r["header_color"] or "#eab308",
+                ),
+            )
+            new_row = cur.fetchone()
+            cur.execute("DELETE FROM notes_deleted_items WHERE id = %s", (deleted_id,))
+    if not new_row:
+        return None
+    return _row_to_item(new_row)
+
+
 def delete_item(item_id: int) -> bool:
     """
     Delete an item. User-only (AI cannot delete).

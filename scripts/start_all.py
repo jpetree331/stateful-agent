@@ -20,6 +20,7 @@ Manual kill commands (if you ever need them without this script):
     # Nuclear — kill all Python + Node:
     taskkill /IM python.exe /F && taskkill /IM node.exe /F
 """
+
 import argparse
 import subprocess
 import sys
@@ -32,19 +33,22 @@ PYTHON = sys.executable  # Inherits the venv Python from whichever Python runs t
 LOG_DIR = PROJECT_ROOT / "logs" / "services"
 
 BG_SERVICES = [
-    ("api",       f'"{PYTHON}" -m src.agent.api',                    PROJECT_ROOT),
-    ("dashboard", "npm run dev",                                       PROJECT_ROOT / "dashboard"),
-    ("heartbeat", f'"{PYTHON}" -m scripts.run_heartbeat_scheduler',   PROJECT_ROOT),
+    ("api", f'"{PYTHON}" -m src.agent.api', PROJECT_ROOT),
+    ("dashboard", "npm run dev", PROJECT_ROOT / "dashboard"),
+    ("heartbeat", f'"{PYTHON}" -m scripts.run_heartbeat_scheduler', PROJECT_ROOT),
 ]
 
 
 # ── Kill helpers ──────────────────────────────────────────────────────────────
 
+
 def _kill_port(port: int, label: str) -> None:
     """Kill any process currently listening on the given TCP port (IPv4 and IPv6)."""
     result = subprocess.run(
-        f'netstat -ano',
-        shell=True, capture_output=True, text=True,
+        f"netstat -ano",
+        shell=True,
+        capture_output=True,
+        text=True,
     )
     pids = set()
     for line in result.stdout.splitlines():
@@ -66,10 +70,17 @@ def _kill_port(port: int, label: str) -> None:
 def _kill_cmdline(fragment: str, label: str) -> None:
     """Kill python.exe processes whose command line contains `fragment`."""
     result = subprocess.run(
-        ["wmic", "process", "where",
-         f"name='python.exe' and commandline like '%{fragment}%'",
-         "get", "processid", "/format:value"],
-        capture_output=True, text=True,
+        [
+            "wmic",
+            "process",
+            "where",
+            f"name='python.exe' and commandline like '%{fragment}%'",
+            "get",
+            "processid",
+            "/format:value",
+        ],
+        capture_output=True,
+        text=True,
     )
     pids = set()
     for line in result.stdout.splitlines():
@@ -95,6 +106,7 @@ def kill_old_services() -> None:
 
 # ── Start helpers ─────────────────────────────────────────────────────────────
 
+
 def start_background() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     for name, cmd, cwd in BG_SERVICES:
@@ -112,6 +124,7 @@ def start_background() -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Launch all agent services")
     parser.add_argument(
@@ -127,7 +140,7 @@ def main():
     start_background()
 
     print("Waiting for servers to start (API can take ~10s to load agent)...")
-    time.sleep(10)
+    time.sleep(5)
     webbrowser.open("http://localhost:5173")
 
     if args.no_chat:
@@ -145,12 +158,15 @@ def main():
     # Background services are separate processes — they keep running after this exits.
     sys.path.insert(0, str(PROJECT_ROOT))
     from src.agent.graph import run_local
+
     try:
         run_local(thread_id="main")
     except KeyboardInterrupt:
         pass
 
-    print("\nChat ended. API / Dashboard / Heartbeat are still running in the background.")
+    print(
+        "\nChat ended. API / Dashboard / Heartbeat are still running in the background."
+    )
     print("Logs: logs/services/api.log  dashboard.log  heartbeat.log")
 
 

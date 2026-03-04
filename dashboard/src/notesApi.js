@@ -172,6 +172,22 @@ export async function addFinishedItem(boardId, item) {
   return res.json()
 }
 
+export async function getDeletedItems(boardId, { period = 'week', page = 0 } = {}) {
+  if (isTestMode()) return { items: [], has_more: false, period, page }
+  const res = await fetch(`${API_BASE}/notes/boards/${boardId}/deleted?period=${period}&page=${page}`)
+  if (!res.ok) throw new Error('Failed to load deleted items')
+  return res.json()
+}
+
+export async function restoreDeletedItem(boardId, deletedId) {
+  if (isTestMode()) throw new Error('Restore not supported in test mode')
+  const res = await fetch(`${API_BASE}/notes/boards/${boardId}/deleted/${deletedId}/restore`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error('Failed to restore')
+  return res.json()
+}
+
 export async function archiveFinishedItem(boardId, finishedId) {
   if (isTestMode()) {
     const finished = getStorage(STORAGE_KEYS.finished, {})

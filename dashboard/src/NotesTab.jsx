@@ -293,8 +293,132 @@ function AddNotePalette({ onAdd }) {
   )
 }
 
+// ==================== SAVED NOTES MODAL ====================
+
+function SavedNotesModal({ boardId, boardName, onRestore, onClose }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [period, setPeriod] = useState('week')
+  const [page, setPage] = useState(0)
+  const [restoring, setRestoring] = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await notesApi.getDeletedItems(boardId, { period, page })
+      setData(res)
+    } catch {
+      setData({ items: [], has_more: false })
+    } finally {
+      setLoading(false)
+    }
+  }, [boardId, period, page])
+
+  useEffect(() => { load() }, [load])
+
+  const handleRestore = async (deletedId) => {
+    setRestoring(deletedId)
+    try {
+      await notesApi.restoreDeletedItem(boardId, deletedId)
+      onRestore()
+    } catch (err) {
+      alert(err.message || 'Restore failed')
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  const formatDate = (iso) => {
+    if (!iso) return ''
+    try {
+      return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    } catch { return iso }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="bg-slate-800 border border-slate-600 rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+          <h3 className="text-lg font-medium text-slate-100">Saved notes — {boardName}</h3>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200 p-1">×</button>
+        </div>
+        <div className="flex gap-2 p-3 border-b border-slate-700">
+          <button
+            type="button"
+            onClick={() => { setPeriod('week'); setPage(0) }}
+            className={`px-3 py-1.5 rounded-lg text-sm ${period === 'week' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+          >
+            By week
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPeriod('month'); setPage(0) }}
+            className={`px-3 py-1.5 rounded-lg text-sm ${period === 'month' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+          >
+            By month
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="px-2 py-1 rounded text-sm text-slate-400 hover:text-slate-200 disabled:opacity-40"
+          >
+            ◀ Prev
+          </button>
+          <span className="text-xs text-slate-500 self-center">Page {page + 1}</span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!data?.has_more}
+            className="px-2 py-1 rounded text-sm text-slate-400 hover:text-slate-200 disabled:opacity-40"
+          >
+            Next ▶
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <p className="text-slate-400 text-sm">Loading...</p>
+          ) : !data?.items?.length ? (
+            <p className="text-slate-500 text-sm">No saved notes for this {period}.</p>
+          ) : (
+            <ul className="space-y-2">
+              {data.items.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-slate-900/60 border border-slate-700 hover:border-slate-600"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-200 truncate" title={item.title_or_preview}>
+                      {item.title_or_preview}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Created {formatDate(item.created_at)} · Deleted {formatDate(item.deleted_at)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRestore(item.id)}
+                    disabled={restoring === item.id}
+                    className="px-3 py-1.5 rounded-lg text-sm bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 shrink-0"
+                  >
+                    {restoring === item.id ? 'Restoring...' : 'Restore'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Word count for convert-to-doc prompt (Milanote-style)
-const DOC_WORD_THRESHOLD = 800
+const DOC_WORD_THRESHOLD = 150
 const DOC_ICON_SIZE = 72
 
 function countWords(html) {
@@ -1179,6 +1303,9 @@ export default function NotesTab() {
   const [aiLoading, setAiLoading] = useState(false)
   const [recallQuery, setRecallQuery] = useState('')
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showSavedNotes, setShowSavedNotes] = useState(false)
+  const [sidebarPinned, setSidebarPinned] = useState(false)
+  const [sidebarHovered, setSidebarHovered] = useState(false)
   const [boardSettings, setBoardSettings] = useState(notesApi.getBoardSettings(null))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1561,6 +1688,15 @@ export default function NotesTab() {
             Shortcuts
           </button>
           <span className="text-slate-600 flex-shrink-0">|</span>
+          <button
+            type="button"
+            onClick={() => setShowSavedNotes(true)}
+            className="text-xs text-slate-500 hover:text-slate-400 transition-colors flex-shrink-0"
+            title="View saved (deleted) notes"
+          >
+            Saved
+          </button>
+          <span className="text-slate-600 flex-shrink-0">|</span>
           {boards.map((b) => (
             <div key={b.id} className="flex items-center gap-1 flex-shrink-0">
               {editingBoardId === b.id ? (
@@ -1756,7 +1892,48 @@ export default function NotesTab() {
         </div>
         </div>
       </div>
-      <aside className="w-64 border-l border-slate-800 bg-slate-900/80 flex-shrink-0 overflow-y-auto p-4">
+      <aside
+        className={`relative border-l border-slate-800 bg-slate-900/80 flex-shrink-0 overflow-y-auto transition-all duration-200 ${
+          sidebarPinned || sidebarHovered ? 'w-64 p-4' : 'w-10 p-1'
+        }`}
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
+      >
+        {(sidebarPinned || sidebarHovered) && (
+          <div className="absolute top-2 right-2 z-10" style={{ right: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={() => setSidebarPinned((p) => !p)}
+              className={`p-1.5 rounded-lg text-sm transition-colors ${
+                sidebarPinned ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-700'
+              }`}
+              title={sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar open'}
+            >
+              {sidebarPinned ? '📌' : '📍'}
+            </button>
+          </div>
+        )}
+        {!sidebarPinned && !sidebarHovered && (
+          <div className="flex flex-col items-center pt-4 gap-2">
+            <button
+              type="button"
+              onClick={() => setSidebarHovered(true)}
+              className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-700"
+              title="Show panel"
+            >
+              ◀
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarPinned(true)}
+              className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-700"
+              title="Pin open"
+            >
+              📍
+            </button>
+          </div>
+        )}
+        <div className={sidebarPinned || sidebarHovered ? '' : 'hidden'}>
         {error && (
           <div className="mb-3 p-2 rounded-lg bg-red-900/20 border border-red-800/50">
             <p className="text-sm text-red-400">{error}</p>
@@ -1964,7 +2141,16 @@ export default function NotesTab() {
         ) : (
           <AddNotePalette onAdd={addItem} />
         )}
+        </div>
       </aside>
+      {showSavedNotes && activeBoardId && (
+        <SavedNotesModal
+          boardId={activeBoardId}
+          boardName={boards.find((b) => b.id === activeBoardId)?.name ?? 'Board'}
+          onRestore={() => { loadItems(); setShowSavedNotes(false) }}
+          onClose={() => setShowSavedNotes(false)}
+        />
+      )}
       {showShortcuts && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowShortcuts(false)}>
           <div

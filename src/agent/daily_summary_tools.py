@@ -31,6 +31,14 @@ def daily_summary_write(date: str, summary: str) -> str:
 
     try:
         row = upsert_daily_summary(date, summary)
-        return f"Daily summary saved for {row['summary_date']}."
     except Exception as e:
         return f"Error saving daily summary: {e}"
+
+    # Mirror to journal (best-effort — don't fail the tool if journal is unavailable)
+    try:
+        from .journal import save_daily_summary as _journal_save
+        _journal_save(date, summary)
+    except Exception:
+        pass
+
+    return f"Daily summary saved for {row['summary_date']}."

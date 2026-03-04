@@ -471,6 +471,40 @@ def search_messages(
     return out
 
 
+def get_last_assistant_content(thread_id: str, within_minutes: int = 2) -> str | None:
+    """
+    Get content of the most recent assistant message in a thread.
+    Optional: only consider messages created within the last N minutes.
+    Used as fallback when in-memory result doesn't have last_ai_content.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if within_minutes > 0:
+                cutoff = datetime.now(ZoneInfo("UTC")) - timedelta(minutes=within_minutes)
+                cur.execute(
+                    """
+                    SELECT content FROM messages
+                    WHERE thread_id = %s AND role = 'assistant'
+                      AND created_at >= %s
+                    ORDER BY idx DESC LIMIT 1
+                    """,
+                    (thread_id, cutoff),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT content FROM messages
+                    WHERE thread_id = %s AND role = 'assistant'
+                    ORDER BY idx DESC LIMIT 1
+                    """,
+                    (thread_id,),
+                )
+            row = cur.fetchone()
+    return row["content"] if row and row["content"] else None
+
+
 def append_messages(
     thread_id: str,
     messages: list[tuple[str, str, dict | None, str | None]],

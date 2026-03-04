@@ -50,6 +50,7 @@ from .document_tools import read_document
 from .file_tools import list_directory, move_to_trash, read_file, search_files, write_file
 from .hindsight import retain_exchange
 from .hindsight_tools import hindsight_recall, hindsight_reflect
+from .journal_tools import read_journal, save_journal_entry
 from .knowledge_bank_tools import search_knowledge_bank
 from .python_repl_tools import python_repl
 from .reminder_tools import list_reminders, set_reminder
@@ -273,6 +274,10 @@ TOOL_CATEGORIES = [
     ]),
     ("Daily Summaries", [
         daily_summary_write,
+    ]),
+    ("Journal", [
+        read_journal,
+        save_journal_entry,
     ]),
     ("Notes (Dashboard)", [
         notes_read,
@@ -862,6 +867,9 @@ def chat(
         daemon=True,
     ).start()
 
+    # Expose last_ai_content so heartbeat/cron can reliably save to journal
+    # (avoids re-extracting from result["messages"] which can differ by LangGraph version)
+    result["last_ai_content"] = last_ai
     return result
 
 

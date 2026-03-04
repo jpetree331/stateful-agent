@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import Picker from '@emoji-mart/react'
 import emojiData from '@emoji-mart/data'
 import NotesTab from './NotesTab'
+import JournalTab from './JournalTab'
 
 const API_BASE = '/api'
 
@@ -125,6 +126,8 @@ function TimeInput({ value, onChange }) {
 // Cron job card (for the queue)
 function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
+  const [instructionsExpanded, setInstructionsExpanded] = useState(false)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -218,13 +221,42 @@ function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
 
       {/* Description */}
       {job.description && (
-        <p className="text-sm text-slate-400 mb-3">{job.description}</p>
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-slate-500">Description:</span>
+            {job.description.length > 100 && (
+              <button
+                type="button"
+                onClick={() => setDescriptionExpanded((e) => !e)}
+                className="text-xs text-emerald-400 hover:text-emerald-300"
+              >
+                {descriptionExpanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </div>
+          <p className={`text-sm text-slate-400 ${descriptionExpanded ? '' : 'line-clamp-2'}`}>
+            {job.description}
+          </p>
+        </div>
       )}
 
-      {/* Instructions preview */}
+      {/* Instructions preview with expand */}
       <div className="bg-slate-900/50 rounded-lg p-3 mb-3">
-        <p className="text-xs text-slate-500 mb-1">Instructions:</p>
-        <p className="text-sm text-slate-300 line-clamp-3">{job.instructions}</p>
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs text-slate-500">Instructions:</p>
+          {job.instructions && job.instructions.length > 120 && (
+            <button
+              type="button"
+              onClick={() => setInstructionsExpanded((e) => !e)}
+              className="text-xs text-emerald-400 hover:text-emerald-300"
+            >
+              {instructionsExpanded ? 'Show less' : 'Show more'}
+            </button>
+          )}
+        </div>
+        <p className={`text-sm text-slate-300 whitespace-pre-wrap ${instructionsExpanded ? '' : 'line-clamp-3'}`}>
+          {job.instructions}
+        </p>
       </div>
 
       {/* Schedule info */}
@@ -1464,8 +1496,16 @@ function ChatTab() {
         throw new Error(err.detail || `HTTP ${res.status}`)
       }
 
-      // Reload from DB to get the actual saved messages (user + assistant)
-      await loadHistory()
+      // Append assistant response from API — avoids full reload that can make chat "vanish"
+      const data = await res.json()
+      if (data?.response) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: data.response, metadata: {} },
+        ])
+      } else {
+        await loadHistory()
+      }
     } catch (err) {
       setError(err.message || 'Failed to send message')
       setMessages((prev) => [
@@ -1958,11 +1998,12 @@ function HeartbeatTab() {
 
 const TABS = [
   { id: 'chat', label: 'Chat' },
+  { id: 'journal', label: 'Journal' },
+  { id: 'notes', label: 'Notes' },
   { id: 'core', label: 'Core' },
   { id: 'cron', label: 'Cron' },
   { id: 'data', label: 'Data' },
   { id: 'heartbeat', label: 'Hbeat' },
-  { id: 'notes', label: 'Notes' },
   { id: 'tools', label: 'Tools' },
 ]
 
@@ -2004,6 +2045,10 @@ function App() {
             <div className="flex-1 flex flex-col overflow-hidden min-w-0">
               <ChatTab />
             </div>
+          ) : activeTab === 'journal' ? (
+            <main className="flex-1 overflow-y-auto px-6 py-6">
+              <JournalTab />
+            </main>
           ) : activeTab === 'notes' ? (
             <NotesTab />
           ) : activeTab === 'core' ? (
