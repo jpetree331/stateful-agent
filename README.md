@@ -282,15 +282,21 @@ Heartbeat skips automatically if the user has been active within `HEARTBEAT_SKIP
 
 ---
 
-## Weekly Synthesis (Cron)
+## Cron Jobs
 
-Two jobs, Sunday night:
+### Daily Summary (every night)
+
+The agent writes a short narrative summary of each day in its own words via `daily_summary_write`. These are stored in PostgreSQL and the **last 7 days are always injected into every system prompt** — giving the agent temporal narrative context without requiring a search. This is what powers the "I remember what we were working on earlier this week" behavior.
+
+Agent-authored summaries capture what the agent found *significant*, not just a mechanical transcript replay. At ~1,400 tokens for a full week, the cost is low and the continuity payoff is high.
+
+### Weekly Synthesis (Sunday night — two phases)
 
 **Phase 1 — 1:00 AM**: Reads all living logs from the past week. Synthesizes relational patterns, intellectual growth, tensions, errors, and shared lore into a structured Markdown reflection document. Writes it to disk. Stops.
 
 **Phase 2 — 2:00 AM**: Fresh invocation. Reads the Phase 1 document. Executes precise core memory updates (`user`, `identity`, `ideaspace`, `principles` blocks) based strictly on what the document says. Retires resolved threads and evolved lore entries.
 
-The time gap is for the human, not the LLM — it creates a review window to correct any flawed premises before they get written into permanent identity.
+The gap between phases is for the human, not the LLM — it creates a review window to correct any flawed premises before they get written into permanent identity.
 
 ---
 
@@ -409,5 +415,7 @@ See [CLAUDE.md](./CLAUDE.md) for full developer documentation.
 ---
 
 ## Third-Party Attribution
+
+**Hindsight** — Episodic memory system by [Vectorize.io](https://vectorize.io). [github.com/vectorize-io/hindsight](https://github.com/vectorize-io/hindsight). MIT License. Hindsight provides the semantic recall layer (`hindsight_recall`, `hindsight_reflect`) that gives this agent access to lived experience across all past conversations. Citation: Vectorize.io. (2024). Hindsight: Agent Memory That Learns. https://github.com/vectorize-io/hindsight
 
 **KittenTTS** — [KittenTTS](https://github.com/KittenML/KittenTTS) by KittenML, Apache License 2.0. See [licenses/KittenTTS-LICENSE](./licenses/KittenTTS-LICENSE).
