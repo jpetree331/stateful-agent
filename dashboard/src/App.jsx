@@ -1228,6 +1228,7 @@ function CoreMemoryEditor({ blockType, content, readOnly, onSave, onChange, onRe
     user: 'User',
     identity: 'Identity',
     ideaspace: 'Ideaspace',
+    principles: 'Principles',
   }
 
   const blockDescriptions = {
@@ -1235,6 +1236,7 @@ function CoreMemoryEditor({ blockType, content, readOnly, onSave, onChange, onRe
     user: 'Information about the user that the agent should remember.',
     identity: "The agent's identity, personality, and self-concept.",
     ideaspace: 'Working memory for ongoing thoughts and ideas.',
+    principles: 'Operational heuristics learned through experience. Updated via weekly synthesis.',
   }
 
   return (

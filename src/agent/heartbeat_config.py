@@ -7,7 +7,7 @@ Falls back to environment variables, then to hard-coded defaults.
 Schema (all fields optional — missing keys fall back to env/defaults):
 {
   "wonder_start": 22,   // hour (0-23) when Wonder window begins
-  "wonder_end":   15,   // hour (0-23) when Wonder window ends (next day if < start)
+  "wonder_end":    3,   // hour (0-23) when Wonder window ends (next day if < start)
   "work_start":   3,    // hour (0-23) when Work window begins
   "work_end":     6,    // hour (0-23) when Work window ends
   "day_interval": 60,   // minutes between heartbeats during waking hours

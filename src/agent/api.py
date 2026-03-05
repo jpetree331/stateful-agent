@@ -605,6 +605,8 @@ def lock_job(job_id: int):
     if not existing:
         raise HTTPException(status_code=404, detail="Cron job not found")
     job = update_cron_job(job_id, is_locked=True)
+    if not job:
+        raise HTTPException(status_code=500, detail="Failed to lock cron job")
     return _job_to_response(job)
 
 
@@ -615,6 +617,8 @@ def unlock_job(job_id: int):
     if not existing:
         raise HTTPException(status_code=404, detail="Cron job not found")
     job = update_cron_job(job_id, is_locked=False)
+    if not job:
+        raise HTTPException(status_code=500, detail="Failed to unlock cron job")
     return _job_to_response(job)
 
 

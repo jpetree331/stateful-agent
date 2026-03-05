@@ -331,10 +331,18 @@ def cron_pause_job_tool(job_id: int) -> str:
     Args:
         job_id: ID of the job to pause
     """
-    from .cron_jobs import pause_cron_job
+    from .cron_jobs import get_cron_job, pause_cron_job
     from .cron_scheduler import refresh_job_in_scheduler
 
     try:
+        existing = get_cron_job(job_id)
+        if not existing:
+            return f"Job {job_id} not found."
+        if existing.get("is_locked"):
+            return (
+                f"Cron job '{existing['name']}' (id={job_id}) is locked by the user. "
+                f"You cannot pause it. Ask the user to unlock it first."
+            )
         job = pause_cron_job(job_id)
         if job:
             refresh_job_in_scheduler(job_id)
@@ -352,10 +360,18 @@ def cron_resume_job_tool(job_id: int) -> str:
     Args:
         job_id: ID of the job to resume
     """
-    from .cron_jobs import resume_cron_job
+    from .cron_jobs import get_cron_job, resume_cron_job
     from .cron_scheduler import refresh_job_in_scheduler
 
     try:
+        existing = get_cron_job(job_id)
+        if not existing:
+            return f"Job {job_id} not found."
+        if existing.get("is_locked"):
+            return (
+                f"Cron job '{existing['name']}' (id={job_id}) is locked by the user. "
+                f"You cannot resume it. Ask the user to unlock it first."
+            )
         job = resume_cron_job(job_id)
         if job:
             refresh_job_in_scheduler(job_id)

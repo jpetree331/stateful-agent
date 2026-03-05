@@ -144,20 +144,7 @@ def load_heartbeat_prompt(mode: str = "wonder") -> str:
     # 'day' uses the wonder prompt (same exploratory spirit, but user may be online)
     effective_mode = "wonder" if mode in ("wonder", "day") else "work"
 
-    # 1. Mode-specific file (env var path)
-    mode_path = HEARTBEAT_WONDER_PROMPT_PATH if effective_mode == "wonder" else HEARTBEAT_WORK_PROMPT_PATH
-    prompt = _load_prompt_from_file(mode_path)
-    if prompt:
-        logger.debug("Loaded %s prompt from mode-specific file: %s", effective_mode, mode_path)
-        return prompt
-
-    # 2. Shared fallback file (env var path)
-    prompt = _load_prompt_from_file(HEARTBEAT_PROMPT_PATH)
-    if prompt:
-        logger.debug("Loaded %s prompt from shared fallback file: %s", effective_mode, HEARTBEAT_PROMPT_PATH)
-        return prompt
-
-    # 3. Custom prompt saved via dashboard (heartbeat_config.json)
+    # 1. Custom prompt saved via dashboard (heartbeat_config.json) — highest priority
     try:
         from .heartbeat_config import load_prompts
         saved = load_prompts()
@@ -167,6 +154,19 @@ def load_heartbeat_prompt(mode: str = "wonder") -> str:
             return saved[key]
     except Exception:
         pass
+
+    # 2. Mode-specific file (env var path)
+    mode_path = HEARTBEAT_WONDER_PROMPT_PATH if effective_mode == "wonder" else HEARTBEAT_WORK_PROMPT_PATH
+    prompt = _load_prompt_from_file(mode_path)
+    if prompt:
+        logger.debug("Loaded %s prompt from mode-specific file: %s", effective_mode, mode_path)
+        return prompt
+
+    # 3. Shared fallback file (env var path)
+    prompt = _load_prompt_from_file(HEARTBEAT_PROMPT_PATH)
+    if prompt:
+        logger.debug("Loaded %s prompt from shared fallback file: %s", effective_mode, HEARTBEAT_PROMPT_PATH)
+        return prompt
 
     # 4. Built-in default
     logger.debug("Using built-in default %s prompt", effective_mode)

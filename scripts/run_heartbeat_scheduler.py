@@ -2,29 +2,28 @@
 Run heartbeat on a schedule using APScheduler.
 
 Alternative to Windows Task Scheduler. Keeps running and fires heartbeat every N minutes.
-Automatically selects the heartbeat mode based on time of day:
+Automatically selects the heartbeat mode based on time of day.
 
-  Wonder  (exploration)  — overnight, outside the work window
-  Work    (projects)     — pre-online window before the user comes online
+Time windows are configured in data/heartbeat_config.json (editable from the Hbeat dashboard tab)
+or via env vars as fallback:
+    HEARTBEAT_WONDER_START_HOUR  — start of Wonder window (default: 22 → 10 PM)
+    HEARTBEAT_WONDER_END_HOUR    — end of Wonder window   (default:  3 →  3 AM)
+    HEARTBEAT_WORK_START_HOUR    — start of Work window   (default:  3 →  3 AM)
+    HEARTBEAT_WORK_END_HOUR      — end of Work window     (default:  6 →  6 AM)
+    HEARTBEAT_DAY_INTERVAL_MINUTES   — interval during day   (default: 60)
+    HEARTBEAT_NIGHT_INTERVAL_MINUTES — interval overnight    (default: 90)
 
-Time windows (all configurable via env vars):
-    HEARTBEAT_WAKE_HOUR        — start of active period, 0-23 (default: 5  → 5:00 AM)
-    HEARTBEAT_SLEEP_HOUR       — end of active period,   0-23 (default: 22 → 10:00 PM)
-    HEARTBEAT_WORK_START_HOUR  — start of Work window,   0-23 (default: 7  → 7:00 AM)
-    HEARTBEAT_WORK_END_HOUR    — end of Work window,     0-23 (default: 10 → 10:00 AM)
+Default schedule:
+    10 PM –  3 AM : Wonder  (overnight exploration)
+     3 AM –  6 AM : Work    (agent prepares before user comes online)
+     6 AM – 10 PM : Day     (user likely online; every day_interval minutes)
 
-Suggested schedule:
-    10 PM – 5 AM  : Wonder  (quiet overnight exploration)
-    5 AM  – 7 AM  : Wonder  (still overnight)
-    7 AM  – 10 AM : Work    (agent prepares before user comes online)
-    10 AM – 10 PM : skipped (user is likely online; last_active.txt handles live-chat skip)
-
-For daytime one-off heartbeats (e.g. a 2 PM Work check or midday Wonder), create
-named cron jobs in the dashboard with the full prompt text in the instructions field.
-Rowan can create and manage these himself via cron_create_job_tool.
+The scheduler re-reads config on each tick — dashboard changes take effect without restart.
+For one-off daytime heartbeats (e.g. a midday Work or Wonder), create named cron jobs
+in the dashboard with the full prompt in the instructions field.
 
 Usage:
-    python -m scripts.run_heartbeat_scheduler [--interval 60]
+    python -m scripts.run_heartbeat_scheduler [--interval N]
 
 Press Ctrl+C to stop.
 """
