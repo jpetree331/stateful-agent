@@ -2006,6 +2006,10 @@ function HeartbeatTab() {
   const [restartCountdown, setRestartCountdown] = useState(0)
   const [restartMsg, setRestartMsg] = useState(null)
 
+  // Start scheduler state
+  const [startingScheduler, setStartingScheduler] = useState(false)
+  const [startSchedulerMsg, setStartSchedulerMsg] = useState(null)
+
   const load = async () => {
     try {
       const [sRes, hRes, cRes, pRes] = await Promise.all([
@@ -2339,6 +2343,45 @@ function HeartbeatTab() {
         </div>
       </div>
 
+      {/* ── Start Scheduler ── */}
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+        <h2 className="font-semibold text-slate-100 mb-1">Start Scheduler</h2>
+        <p className="text-slate-400 text-xs mb-4">
+          The Hbeat tab configures schedule and prompts. Click below to start the heartbeat scheduler so heartbeats actually run. Logs: logs/services/heartbeat.log
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={async () => {
+              setStartingScheduler(true)
+              setStartSchedulerMsg(null)
+              try {
+                const res = await fetch(`${API_BASE}/heartbeat/start`, { method: 'POST' })
+                const d = await res.json().catch(() => ({}))
+                if (res.ok) {
+                  setStartSchedulerMsg({ ok: true, text: d.message || 'Scheduler started.' })
+                  load()
+                } else {
+                  setStartSchedulerMsg({ ok: false, text: d.detail || 'Failed to start.' })
+                }
+              } catch (e) {
+                setStartSchedulerMsg({ ok: false, text: e.message || 'Failed to start.' })
+              } finally {
+                setStartingScheduler(false)
+              }
+            }}
+            disabled={startingScheduler}
+            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white px-4 py-2 rounded-lg text-sm font-medium"
+          >
+            {startingScheduler ? 'Starting…' : 'Start Scheduler'}
+          </button>
+          {startSchedulerMsg && (
+            <span className={`text-sm ${startSchedulerMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+              {startSchedulerMsg.text}
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* ── Restart ── */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
         <h2 className="font-semibold text-slate-100 mb-1">Restart Server</h2>
@@ -2369,8 +2412,39 @@ function HeartbeatTab() {
         <h2 className="font-semibold text-slate-300 mb-3 text-sm uppercase tracking-wider">Session Ledger</h2>
         {sessions.length === 0 ? (
           <div className="text-slate-500 text-sm bg-slate-900 border border-slate-700 rounded-xl p-5">
-            No heartbeats recorded yet. Start the scheduler:
-            <code className="block mt-2 text-slate-300 text-xs">python -m scripts.run_heartbeat_scheduler</code>
+            <p className="mb-3">No heartbeats recorded yet. The Hbeat tab configures schedule and prompts — you must start the scheduler for heartbeats to run.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={async () => {
+                  setStartingScheduler(true)
+                  setStartSchedulerMsg(null)
+                  try {
+                    const res = await fetch(`${API_BASE}/heartbeat/start`, { method: 'POST' })
+                    const d = await res.json().catch(() => ({}))
+                    if (res.ok) {
+                      setStartSchedulerMsg({ ok: true, text: d.message || 'Scheduler started.' })
+                      load()
+                    } else {
+                      setStartSchedulerMsg({ ok: false, text: d.detail || 'Failed to start.' })
+                    }
+                  } catch (e) {
+                    setStartSchedulerMsg({ ok: false, text: e.message || 'Failed to start.' })
+                  } finally {
+                    setStartingScheduler(false)
+                  }
+                }}
+                disabled={startingScheduler}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {startingScheduler ? 'Starting…' : 'Start Scheduler'}
+              </button>
+              {startSchedulerMsg && (
+                <span className={`text-sm ${startSchedulerMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {startSchedulerMsg.text}
+                </span>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-slate-600">Or run manually: <code className="text-slate-400">python -m scripts.run_heartbeat_scheduler</code></p>
           </div>
         ) : (
           <div className="space-y-2">

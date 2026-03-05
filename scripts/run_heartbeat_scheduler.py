@@ -76,7 +76,7 @@ def run_one_heartbeat():
     if _scheduler_ref and interval != _current_interval and _current_interval != 0:
         try:
             _scheduler_ref.reschedule_job("heartbeat", trigger="interval", minutes=interval)
-            print(f"[Heartbeat] Interval changed: {_current_interval}m → {interval}m")
+            print(f"[Heartbeat] Interval changed: {_current_interval}m -> {interval}m")
             _current_interval = interval
         except Exception as e:
             print(f"[Heartbeat] Could not reschedule: {e}")
@@ -116,12 +116,12 @@ def main():
 
     print(
         f"Heartbeat scheduler started\n"
-        f"  Wonder window : {cfg['wonder_start']:02d}:00 → {cfg['wonder_end']:02d}:00  "
+        f"  Wonder window : {cfg['wonder_start']:02d}:00 - {cfg['wonder_end']:02d}:00  "
         f"(every {cfg['night_interval']} min)\n"
-        f"  Work window   : {cfg['work_start']:02d}:00 → {cfg['work_end']:02d}:00  "
+        f"  Work window   : {cfg['work_start']:02d}:00 - {cfg['work_end']:02d}:00  "
         f"(inside night window)\n"
         f"  Day           : all other hours  (every {cfg['day_interval']} min)\n"
-        f"  Starting interval: {start_interval} min  ·  Ctrl+C to stop."
+        f"  Starting interval: {start_interval} min. Ctrl+C to stop."
     )
     scheduler.start()
 

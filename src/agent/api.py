@@ -872,6 +872,37 @@ def save_heartbeat_config(body: dict):
     return {"ok": True, "config": load_config()}
 
 
+@api_router.post("/heartbeat/start")
+def start_heartbeat_scheduler():
+    """
+    Start the heartbeat scheduler in the background (detached process).
+    Logs go to logs/services/heartbeat.log.
+    """
+    import subprocess
+
+    project_root = Path(__file__).resolve().parents[2]
+    log_dir = project_root / "logs" / "services"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "heartbeat.log"
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "scripts.run_heartbeat_scheduler"],
+            cwd=str(project_root),
+            stdout=open(log_file, "a", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        return {"ok": True, "message": "Heartbeat scheduler started. Logs: logs/services/heartbeat.log"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post("/heartbeat/restart")
 def restart_server():
     """

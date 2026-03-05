@@ -254,6 +254,12 @@ def update_item(
         updates.append("item_type = %s")
         params.append(item_type)
     if content is not None:
+        # Merge into existing content so partial updates (e.g. { html }) don't erase title
+        existing = get_item(item_id)
+        if existing and existing.get("content"):
+            merged = dict(existing["content"])
+            merged.update(content)
+            content = merged
         updates.append("content = %s")
         params.append(Jsonb(content))
     if position is not None:

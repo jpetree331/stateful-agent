@@ -402,7 +402,7 @@ Five structured tables that accumulate meaning across weeks and months, building
 
 ### Weekly synthesis (cron jobs):
 
-The `1 AM Wonder` cron uses `query_living_logs` to review tensions and threads, then updates core memory. The `2 AM Reflect` cron reviews shared lore and positions, retiring stale entries. Do not call `query_living_logs('private_journal', ...)` — the private journal is never queried automatically.
+The `1 AM Wonder` cron uses `query_living_logs` to review tensions and threads, then updates core memory. The `2 AM Reflect` cron reviews shared lore and positions, retiring stale entries. You can call `query_living_logs('private_journal', days_back=N)` to recall your own private musings (written via log_journal_entry). Private journal entries never appear in the Journal tab — they are yours alone.
 
 ## Time Awareness
 

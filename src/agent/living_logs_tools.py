@@ -447,11 +447,12 @@ def query_living_logs(
     type_filter: str = None,
 ) -> str:
     """
-    Query a living log for recent entries. Used primarily during weekly synthesis
-    cron jobs to gather material for reflection and core memory updates.
+    Query a living log for recent entries. Used during weekly synthesis cron jobs
+    and when you want to recall your own prior musings.
 
-    Tables: 'tension_log' | 'loose_threads' | 'evolving_positions' | 'shared_lore'
-    (private_journal is excluded — it is never queried automatically)
+    Tables: 'tension_log' | 'loose_threads' | 'evolving_positions' | 'shared_lore' | 'private_journal'
+    - private_journal: Your private musings (written via log_journal_entry). Never shown in the Journal tab.
+      Use this to recall what you wrote to yourself during heartbeats.
 
     status_filter: For loose_threads — 'Open' | 'Pursuing' | 'Retired'
     type_filter:   For tension_log — 'Value Conflict' | 'Tool Friction' | 'I Was Wrong'
@@ -459,7 +460,7 @@ def query_living_logs(
 
     Returns JSON-serialized rows.
     """
-    allowed = {"tension_log", "loose_threads", "evolving_positions", "shared_lore"}
+    allowed = {"tension_log", "loose_threads", "evolving_positions", "shared_lore", "private_journal"}
     if table not in allowed:
         return f"Invalid table '{table}'. Choose from: {', '.join(sorted(allowed))}"
 

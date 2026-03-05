@@ -115,7 +115,7 @@ def start_background() -> None:
             cmd,
             cwd=str(cwd),
             shell=True,
-            stdout=open(log, "w"),
+            stdout=open(log, "w", encoding="utf-8"),
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
