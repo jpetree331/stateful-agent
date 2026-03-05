@@ -142,8 +142,9 @@ def cron_list_jobs_tool(status: str = "") -> str:
         if len(job.get("instructions") or "") > 120:
             instructions_preview += "..."
 
+        lock_flag = " 🔒 LOCKED" if job.get("is_locked") else ""
         lines.append(
-            f"[id={job['id']}] {job['name']} — {job['status'].upper()}\n"
+            f"[id={job['id']}] {job['name']} — {job['status'].upper()}{lock_flag}\n"
             f"  Schedule: {schedule_str}\n"
             f"  Instructions: {instructions_preview}\n"
             f"  Last run: {job.get('last_run_at') or 'Never'} ({job.get('last_run_status') or 'N/A'})"
@@ -168,6 +169,14 @@ def cron_create_job_tool(
     For RECURRING jobs: provide schedule_days and schedule_time.
     For ONE-TIME jobs: provide run_date (YYYY-MM-DD) and schedule_time; leave schedule_days empty.
 
+    IMPORTANT: Call this tool ONCE per job. It returns the job id on success — do not
+    retry or call again. If you are unsure whether a job was created, use
+    cron_list_jobs_tool to check first.
+
+    This tool will refuse to create a duplicate: if an active job with the same name
+    already exists (same run_date for one-time, or same schedule for recurring), it
+    returns the existing job instead of creating a new one.
+
     Args:
         name: Short descriptive job name
         instructions: What the agent should do when this job runs (the full prompt)
@@ -178,10 +187,23 @@ def cron_create_job_tool(
         description: Optional human-readable description
         run_date: For one-time jobs: date in YYYY-MM-DD format. Leave "" for recurring.
     """
-    from .cron_jobs import create_cron_job
+    from .cron_jobs import create_cron_job, list_cron_jobs
     from .cron_scheduler import refresh_job_in_scheduler
 
     try:
+        # Duplicate guard: check for an existing active job with the same name
+        existing = list_cron_jobs(status="active")
+        run_date_val = run_date.strip() or None
+        for job in existing:
+            if job["name"].strip().lower() == name.strip().lower():
+                # For one-time jobs also match on run_date; for recurring just name is enough
+                if run_date_val is None or str(job.get("run_date") or "") == run_date_val:
+                    job_type = "one-time" if job.get("is_one_time") else "recurring"
+                    return (
+                        f"A {job_type} job named '{job['name']}' already exists (id={job['id']}). "
+                        f"No new job created. Use cron_update_job_tool to modify it."
+                    )
+
         job = create_cron_job(
             name=name,
             instructions=instructions,
@@ -190,7 +212,7 @@ def cron_create_job_tool(
             timezone=timezone,
             description=description or None,
             created_by="agent",
-            run_date=run_date or None,
+            run_date=run_date_val,
         )
 
         if job:
@@ -228,31 +250,40 @@ def cron_update_job_tool(
         run_date: New run date for one-time jobs YYYY-MM-DD (omit to keep current)
         status: "active" or "paused" (omit to keep current)
     """
-    from .cron_jobs import update_cron_job
+    from .cron_jobs import get_cron_job, update_cron_job
     from .cron_scheduler import refresh_job_in_scheduler
 
-    kwargs = {}
-    if name:
-        kwargs["name"] = name
-    if instructions:
-        kwargs["instructions"] = instructions
-    if schedule_days:
-        kwargs["schedule_days"] = schedule_days
-    if schedule_time:
-        kwargs["schedule_time"] = schedule_time
-    if timezone:
-        kwargs["timezone"] = timezone
-    if description:
-        kwargs["description"] = description
-    if run_date:
-        kwargs["run_date"] = run_date
-    if status:
-        kwargs["status"] = status
-
-    if not kwargs:
-        return "No fields provided to update."
-
     try:
+        existing = get_cron_job(job_id)
+        if not existing:
+            return f"Job {job_id} not found."
+        if existing.get("is_locked"):
+            return (
+                f"Cron job '{existing['name']}' (id={job_id}) is locked by the user. "
+                f"You may read it but cannot edit it. Ask the user to unlock it if changes are needed."
+            )
+
+        kwargs = {}
+        if name:
+            kwargs["name"] = name
+        if instructions:
+            kwargs["instructions"] = instructions
+        if schedule_days:
+            kwargs["schedule_days"] = schedule_days
+        if schedule_time:
+            kwargs["schedule_time"] = schedule_time
+        if timezone:
+            kwargs["timezone"] = timezone
+        if description:
+            kwargs["description"] = description
+        if run_date:
+            kwargs["run_date"] = run_date
+        if status:
+            kwargs["status"] = status
+
+        if not kwargs:
+            return "No fields provided to update."
+
         job = update_cron_job(job_id, **kwargs)
         if job:
             refresh_job_in_scheduler(job_id)
@@ -274,6 +305,15 @@ def cron_delete_job_tool(job_id: int) -> str:
     from .cron_scheduler import remove_job_from_scheduler
 
     try:
+        from .cron_jobs import get_cron_job
+        existing = get_cron_job(job_id)
+        if not existing:
+            return f"Job {job_id} not found."
+        if existing.get("is_locked"):
+            return (
+                f"Cron job '{existing['name']}' (id={job_id}) is locked by the user. "
+                f"You cannot delete it. Ask the user to unlock it first."
+            )
         remove_job_from_scheduler(job_id)
         deleted = delete_cron_job(job_id)
         if deleted:

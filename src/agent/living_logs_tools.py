@@ -37,7 +37,7 @@ def _get_conn():
 
 def _fallback_write(table: str, content: str, error: Exception) -> str:
     """Write to local fallback file when DB is unavailable."""
-    fallback_path = Path.home() / "agent_fallback_log.txt"
+    fallback_path = Path.home() / "rowan_fallback_log.txt"
     try:
         with open(fallback_path, "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.now(EST).isoformat()}] FALLBACK — {table}\n{content}\nError: {error}\n")

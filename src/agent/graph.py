@@ -635,7 +635,7 @@ def _build_core_memory_prompt(state) -> list[BaseMessage]:
 
     # Editable core memory blocks
     parts.append("# Core Memory (editable)\n\nThese blocks are always in context. You may edit them with the core_memory tools when appropriate.\n")
-    for name, label in [("user", "User"), ("identity", "Identity"), ("ideaspace", "Ideaspace")]:
+    for name, label in [("user", "User"), ("identity", "Identity"), ("ideaspace", "Ideaspace"), ("principles", "Principles")]:
         content = blocks.get(name, "").strip()
         parts.append(f"## {label}\n{content or '(empty)'}\n")
     parts.append(CORE_MEMORY_INSTRUCTIONS)

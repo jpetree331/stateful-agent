@@ -100,14 +100,29 @@ def setup_schema() -> None:
         conn.execute(INDEX_SQL)
         conn.execute(ADD_REASONING_SQL)
         conn.execute(ADD_TOOL_ROLE_SQL)
-        # Core memory blocks (user, identity, ideaspace)
+        # Core memory blocks (user, identity, ideaspace, principles)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS core_memory (
-                block_type TEXT PRIMARY KEY CHECK (block_type IN ('user', 'identity', 'ideaspace')),
+                block_type TEXT PRIMARY KEY CHECK (block_type IN ('user', 'identity', 'ideaspace', 'principles')),
                 content TEXT NOT NULL DEFAULT '',
                 version INTEGER NOT NULL DEFAULT 1,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+        """)
+        # Migration: expand block_type CHECK constraint to include 'principles'
+        conn.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE table_name = 'core_memory'
+                      AND constraint_name = 'core_memory_block_type_check'
+                ) THEN
+                    ALTER TABLE core_memory DROP CONSTRAINT core_memory_block_type_check;
+                    ALTER TABLE core_memory ADD CONSTRAINT core_memory_block_type_check
+                        CHECK (block_type IN ('user', 'identity', 'ideaspace', 'principles'));
+                END IF;
+            END $$;
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS core_memory_history (
@@ -177,6 +192,8 @@ def setup_schema() -> None:
         # Make schedule_days and schedule_time nullable for one-time jobs
         conn.execute("ALTER TABLE cron_jobs ALTER COLUMN schedule_days DROP NOT NULL")
         conn.execute("ALTER TABLE cron_jobs ALTER COLUMN schedule_time DROP NOT NULL")
+        # Lock flag: user-only protection — AI cannot edit or delete locked jobs
+        conn.execute("ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT FALSE")
         # Daily summaries: the agent writes a short summary of each day for persistent temporal context
         conn.execute("""
             CREATE TABLE IF NOT EXISTS daily_summaries (

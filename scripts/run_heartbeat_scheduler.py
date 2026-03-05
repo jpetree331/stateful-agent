@@ -21,7 +21,7 @@ Suggested schedule:
 
 For daytime one-off heartbeats (e.g. a 2 PM Work check or midday Wonder), create
 named cron jobs in the dashboard with the full prompt text in the instructions field.
-The agent can create and manage these via cron_create_job_tool.
+Rowan can create and manage these himself via cron_create_job_tool.
 
 Usage:
     python -m scripts.run_heartbeat_scheduler [--interval 60]

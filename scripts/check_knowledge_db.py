@@ -19,7 +19,7 @@ def main():
     url = os.environ.get("KNOWLEDGE_DATABASE_URL", "").strip()
     if not url:
         print("KNOWLEDGE_DATABASE_URL is not set in .env")
-        print("Add to .env: KNOWLEDGE_DATABASE_URL=postgresql://user:pass@localhost:5432/agent-data")
+        print("Add to .env: KNOWLEDGE_DATABASE_URL=postgresql://user:pass@localhost:5432/rowan-data")
         print("Then run: python -m scripts.setup_knowledge_db")
         sys.exit(1)
 

@@ -1,6 +1,6 @@
 # Public Dashboard via ngrok
 
-Expose your agent dashboard publicly with one ngrok tunnel. Everything runs locally; ngrok creates a public URL.
+Expose your Rowan dashboard publicly with one ngrok tunnel. Everything runs locally; ngrok creates a public URL.
 
 ## Password protection (recommended)
 

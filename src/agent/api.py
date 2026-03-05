@@ -1,5 +1,5 @@
 """
-FastAPI server for the agent dashboard.
+FastAPI server for the Rowan dashboard.
 
 Local dev: Run API + Vite dev server (npm run dev in dashboard/). Open http://localhost:5173.
 Public (ngrok): Build dashboard (npm run build), run API, then ngrok http 8000. One URL serves both.
@@ -43,7 +43,7 @@ logging.basicConfig(
         ),
     ],
 )
-logger = logging.getLogger("agent.api")
+logger = logging.getLogger("rowan.api")
 
 from .core_memory import get_all_blocks, update_block, update_system_instructions
 from .cron_jobs import (
@@ -356,7 +356,7 @@ async def telegram_webhook(request: Request):
 
 @api_router.get("/tools")
 def get_tools():
-    """Get all tools the agent has access to, grouped by category."""
+    """Get all tools Rowan has access to, grouped by category."""
     return {"categories": get_tool_list_for_api()}
 
 
@@ -382,6 +382,10 @@ def get_core_memory():
                 content=blocks.get("ideaspace", ""),
                 read_only=False,
             ),
+            "principles": CoreMemoryBlock(
+                content=blocks.get("principles", ""),
+                read_only=False,
+            ),
         }
     )
 
@@ -393,7 +397,7 @@ def update_core_memory(block_type: str, req: CoreMemoryUpdateRequest):
         update_system_instructions(req.content)
         return {"success": True, "message": "Updated system_instructions"}
     
-    if block_type not in ("user", "identity", "ideaspace"):
+    if block_type not in ("user", "identity", "ideaspace", "principles"):
         raise HTTPException(
             status_code=400,
             detail=f"Block type '{block_type}' is invalid"
@@ -427,6 +431,7 @@ class CronJobUpdate(BaseModel):
     description: str | None = None
     run_date: str | None = None
     status: str | None = None  # "active" or "paused"
+    is_locked: bool | None = None
 
 
 class CronJobResponse(BaseModel):
@@ -442,6 +447,7 @@ class CronJobResponse(BaseModel):
     run_date: str | None
     is_one_time: bool
     status: str
+    is_locked: bool
     created_by: str
     created_at: str
     updated_at: str
@@ -489,6 +495,7 @@ def _job_to_response(job: dict) -> CronJobResponse:
         run_date=run_date_str,
         is_one_time=is_one_time,
         status=job["status"],
+        is_locked=bool(job.get("is_locked", False)),
         created_by=job["created_by"],
         created_at=job["created_at"].isoformat() if job.get("created_at") else None,
         updated_at=job["updated_at"].isoformat() if job.get("updated_at") else None,
@@ -559,47 +566,71 @@ def get_job(job_id: int):
 
 @api_router.put("/cron/jobs/{job_id}", response_model=CronJobResponse)
 def update_job(job_id: int, req: CronJobUpdate):
-    """Update a cron job."""
-    # Check if job exists
+    """Update a cron job. Locked jobs can only have is_locked changed (to unlock them)."""
     existing = get_cron_job(job_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Cron job not found")
-    
+
+    # If locked, only allow toggling is_locked itself (so the user can unlock)
+    if existing.get("is_locked"):
+        if req.is_locked is False:
+            job = update_cron_job(job_id, is_locked=False)
+            if not job:
+                raise HTTPException(status_code=500, detail="Failed to unlock cron job")
+            return _job_to_response(job)
+        raise HTTPException(status_code=403, detail="Cron job is locked. Unlock it first.")
+
     # Build update dict
     updates = {}
-    for field in ["name", "instructions", "schedule_days", "schedule_time", "timezone", "description", "run_date", "status"]:
+    for field in ["name", "instructions", "schedule_days", "schedule_time", "timezone", "description", "run_date", "status", "is_locked"]:
         value = getattr(req, field)
         if value is not None:
             updates[field] = value
-    
+
     if not updates:
         return _job_to_response(existing)
-    
+
     job = update_cron_job(job_id, **updates)
     if not job:
         raise HTTPException(status_code=500, detail="Failed to update cron job")
-    
-    # Refresh in scheduler
+
     refresh_job_in_scheduler(job_id)
-    
+    return _job_to_response(job)
+
+
+@api_router.post("/cron/jobs/{job_id}/lock", response_model=CronJobResponse)
+def lock_job(job_id: int):
+    """Lock a cron job so the AI cannot edit or delete it."""
+    existing = get_cron_job(job_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Cron job not found")
+    job = update_cron_job(job_id, is_locked=True)
+    return _job_to_response(job)
+
+
+@api_router.post("/cron/jobs/{job_id}/unlock", response_model=CronJobResponse)
+def unlock_job(job_id: int):
+    """Unlock a cron job so the AI can edit it again."""
+    existing = get_cron_job(job_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Cron job not found")
+    job = update_cron_job(job_id, is_locked=False)
     return _job_to_response(job)
 
 
 @api_router.delete("/cron/jobs/{job_id}")
 def delete_job(job_id: int):
-    """Delete a cron job."""
-    # Check if job exists
+    """Delete a cron job. Locked jobs cannot be deleted."""
     existing = get_cron_job(job_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Cron job not found")
-    
-    # Remove from scheduler first
-    refresh_job_in_scheduler(job_id)  # This will remove it since it's being deleted
-    
-    # Delete from database
+    if existing.get("is_locked"):
+        raise HTTPException(status_code=403, detail="Cron job is locked and cannot be deleted.")
+
+    refresh_job_in_scheduler(job_id)
     if not delete_cron_job(job_id):
         raise HTTPException(status_code=500, detail="Failed to delete cron job")
-    
+
     return {"success": True, "message": f"Cron job {job_id} deleted"}
 
 
@@ -609,10 +640,8 @@ def pause_job(job_id: int):
     job = pause_cron_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Cron job not found")
-    
-    # Refresh in scheduler (will remove it)
+
     refresh_job_in_scheduler(job_id)
-    
     return _job_to_response(job)
 
 
@@ -622,10 +651,8 @@ def resume_job(job_id: int):
     job = resume_cron_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Cron job not found")
-    
-    # Refresh in scheduler (will add it back)
+
     refresh_job_in_scheduler(job_id)
-    
     return _job_to_response(job)
 
 
@@ -769,6 +796,62 @@ def get_heartbeat_config():
     return load_config()
 
 
+@api_router.get("/heartbeat/prompts")
+def get_heartbeat_prompts():
+    """
+    Return the active heartbeat prompts for both modes.
+
+    Each entry has:
+      text        — the prompt text that will actually be used (custom or built-in default)
+      is_custom   — True if a custom prompt is saved; False if using the built-in default
+    """
+    from .heartbeat_config import load_prompts
+    from .heartbeat import DEFAULT_WONDER_PROMPT, DEFAULT_WORK_PROMPT
+
+    saved = load_prompts()
+    return {
+        "wonder": {
+            "text":      saved["wonder_prompt"] if saved["wonder_prompt"] else DEFAULT_WONDER_PROMPT,
+            "is_custom": saved["wonder_prompt"] is not None,
+        },
+        "work": {
+            "text":      saved["work_prompt"] if saved["work_prompt"] else DEFAULT_WORK_PROMPT,
+            "is_custom": saved["work_prompt"] is not None,
+        },
+    }
+
+
+@api_router.post("/heartbeat/prompts")
+def save_heartbeat_prompts(body: dict):
+    """
+    Save custom heartbeat prompts.
+
+    Body keys (both optional):
+      wonder_prompt — custom Wonder prompt text (null/empty to revert to built-in)
+      work_prompt   — custom Work prompt text   (null/empty to revert to built-in)
+    """
+    from .heartbeat_config import save_prompts
+    save_prompts(
+        wonder_prompt=body.get("wonder_prompt") or None,
+        work_prompt=body.get("work_prompt") or None,
+    )
+    # Return the full resolved state so the UI can confirm what's active
+    from .heartbeat_config import load_prompts
+    from .heartbeat import DEFAULT_WONDER_PROMPT, DEFAULT_WORK_PROMPT
+    saved = load_prompts()
+    return {
+        "ok": True,
+        "wonder": {
+            "text":      saved["wonder_prompt"] if saved["wonder_prompt"] else DEFAULT_WONDER_PROMPT,
+            "is_custom": saved["wonder_prompt"] is not None,
+        },
+        "work": {
+            "text":      saved["work_prompt"] if saved["work_prompt"] else DEFAULT_WORK_PROMPT,
+            "is_custom": saved["work_prompt"] is not None,
+        },
+    }
+
+
 @api_router.post("/heartbeat/config")
 def save_heartbeat_config(body: dict):
     """
@@ -788,64 +871,55 @@ def save_heartbeat_config(body: dict):
 @api_router.post("/heartbeat/restart")
 def restart_server():
     """
-    Rebuild the dashboard and restart the API + ngrok in the background.
+    Restart the API server in the background.
 
     Sequence (runs in a daemon thread so the HTTP response returns immediately):
       1. Wait 3 s (lets the response reach the browser)
-      2. Kill any process on port 8000 (old API) and 5173 (Vite dev)
-      3. Run `python scripts/start_public_dashboard.py` (builds + starts API)
-      4. Run `ngrok http 8000` in a separate detached process
+      2. Kill any process on port 8000 (old API only — Vite dev server on 5173 is left alone)
+      3. Start a new `python -m src.agent.api` in a new console window
 
-    The browser will lose its connection for ~15-30 s while the build runs,
-    then reconnect automatically once the new server is up.
+    The browser will lose its connection for ~5 s while the API restarts,
+    then reconnect automatically. The Vite dev server is not touched.
+
+    For public/ngrok deployments, run `python scripts/start_public_dashboard.py` manually.
     """
     import subprocess
     import threading
     import time as _time
+
+    def _kill_port(port: int) -> None:
+        result = subprocess.run(
+            f'netstat -ano | findstr ":{port} "',
+            shell=True, capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and f":{port}" in parts[1]:
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) > 4:
+                    subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
 
     def _do_restart():
         _time.sleep(3)
         project_root = Path(__file__).resolve().parents[2]
         python = sys.executable
 
-        # Kill old services on ports 8000 and 5173
-        for port in (8000, 5173):
-            result = subprocess.run(
-                f'netstat -ano | findstr ":{port} "',
-                shell=True, capture_output=True, text=True,
-            )
-            for line in result.stdout.splitlines():
-                parts = line.strip().split()
-                if len(parts) >= 2 and f":{port}" in parts[1]:
-                    pid = parts[-1]
-                    if pid.isdigit() and int(pid) > 4:
-                        subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
-
+        # Kill only the API (port 8000). Leave Vite dev server (5173) alone.
+        _kill_port(8000)
         _time.sleep(1)
 
-        # Start API (builds dashboard first via start_public_dashboard.py)
+        # Restart the API in a new console window
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         subprocess.Popen(
-            [python, "scripts/start_public_dashboard.py"],
+            [python, "-m", "src.agent.api"],
             cwd=str(project_root),
-            creationflags=subprocess.CREATE_NEW_CONSOLE if hasattr(subprocess, "CREATE_NEW_CONSOLE") else 0,
+            creationflags=creationflags,
         )
-
-        _time.sleep(20)  # Wait for build + server startup
-
-        # Start ngrok (detached — user must have ngrok on PATH)
-        try:
-            subprocess.Popen(
-                ["ngrok", "http", "8000"],
-                cwd=str(project_root),
-                creationflags=subprocess.CREATE_NEW_CONSOLE if hasattr(subprocess, "CREATE_NEW_CONSOLE") else 0,
-            )
-        except FileNotFoundError:
-            pass  # ngrok not on PATH — user starts it manually
 
     threading.Thread(target=_do_restart, daemon=True).start()
     return {
         "ok": True,
-        "message": "Restart initiated. Dashboard will rebuild (~20s) then reconnect automatically.",
+        "message": "API restarting… reconnects in ~5s. Vite dev server is unchanged.",
     }
 
 

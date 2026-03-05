@@ -12,7 +12,7 @@ Cron (weekly, e.g. Sunday 2 AM):
   python scripts/backup_postgres.py --schedule
 
   Or manually:
-  schtasks /create /tn "AgentPostgresBackup" /tr "cmd /c \"cd /d C:\\path\\to\\project && .venv\\Scripts\\python.exe scripts\\backup_postgres.py\"" /sc weekly /d SUN /st 02:00 /f
+  schtasks /create /tn "RowanPostgresBackup" /tr "cmd /c \"cd /d E:\\git\\LANGGRAPH && .venv\\Scripts\\python.exe scripts\\backup_postgres.py\"" /sc weekly /d SUN /st 02:00 /f
 
 Requires: pg_dump (PostgreSQL client tools). Install from https://www.postgresql.org/download/windows/
   Or: winget install PostgreSQL.PostgreSQL

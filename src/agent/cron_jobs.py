@@ -46,6 +46,7 @@ def create_cron_job(
     description: str | None = None,
     created_by: str = "user",
     run_date: str | None = None,
+    is_locked: bool = False,
 ) -> dict[str, Any]:
     """
     Create a new cron job.
@@ -59,6 +60,7 @@ def create_cron_job(
         description: Optional description
         created_by: "user" or "agent"
         run_date: Specific date for one-time job (YYYY-MM-DD format)
+        is_locked: If True, AI cannot edit or delete this job (user-only protection)
     
     Returns:
         The created job dict
@@ -70,11 +72,11 @@ def create_cron_job(
             cur.execute(
                 """
                 INSERT INTO cron_jobs 
-                (name, description, instructions, timezone, schedule_days, schedule_time, run_date, is_one_time, created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (name, description, instructions, timezone, schedule_days, schedule_time, run_date, is_one_time, created_by, is_locked)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
-                (name, description, instructions, timezone, schedule_days, schedule_time, run_date, is_one_time, created_by),
+                (name, description, instructions, timezone, schedule_days, schedule_time, run_date, is_one_time, created_by, is_locked),
             )
             row = cur.fetchone()
     
@@ -123,8 +125,8 @@ def update_cron_job(
     Allowed fields: name, description, instructions, timezone, schedule_days, schedule_time, run_date, status
     """
     allowed_fields = {
-        "name", "description", "instructions", "timezone", 
-        "schedule_days", "schedule_time", "run_date", "status"
+        "name", "description", "instructions", "timezone",
+        "schedule_days", "schedule_time", "run_date", "status", "is_locked"
     }
     
     updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
@@ -218,6 +220,7 @@ def clone_cron_job(job_id: int, new_name: str | None = None) -> dict[str, Any] |
         timezone=original["timezone"],
         description=original.get("description"),
         created_by="user",  # Cloned jobs are always user-created
+        is_locked=False,    # Clones start unlocked
     )
 
 

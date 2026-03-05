@@ -1,7 +1,7 @@
 """
-Core memory blocks: user, identity, ideaspace (editable), system_instructions (read-only).
+Core memory blocks: user, identity, ideaspace, principles (editable), system_instructions (read-only).
 
-Always in context. Agent can edit user/identity/ideaspace with care. Rollback available.
+Always in context. Agent can edit user/identity/ideaspace/principles with care. Rollback available.
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def update_block(block_type: str, content: str) -> tuple[bool, str]:
     Replace block content. Saves previous version to history for rollback.
     Returns (success, message).
     """
-    if block_type not in ("user", "identity", "ideaspace"):
+    if block_type not in ("user", "identity", "ideaspace", "principles"):
         return False, f"Invalid block_type: {block_type}"
 
     with get_connection() as conn:
@@ -100,7 +100,7 @@ def append_to_block(block_type: str, addition: str) -> tuple[bool, str]:
     Append to block. Saves previous version to history.
     Returns (success, message).
     """
-    if block_type not in ("user", "identity", "ideaspace"):
+    if block_type not in ("user", "identity", "ideaspace", "principles"):
         return False, f"Invalid block_type: {block_type}"
 
     current = get_block(block_type)
@@ -113,7 +113,7 @@ def rollback_block(block_type: str) -> tuple[bool, str]:
     Restore block to previous version. Removes the reverted entry from history
     so further rollbacks go further back. Returns (success, message).
     """
-    if block_type not in ("user", "identity", "ideaspace"):
+    if block_type not in ("user", "identity", "ideaspace", "principles"):
         return False, f"Invalid block_type: {block_type}"
 
     with get_connection() as conn:

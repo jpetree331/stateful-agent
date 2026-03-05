@@ -94,18 +94,66 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Write config to data/heartbeat_config.json."""
+    """Write schedule config to data/heartbeat_config.json (preserves prompt keys)."""
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Only save known keys, cast to int
-    clean = {}
+    # Read existing file so we don't clobber prompt keys
+    existing: dict = {}
+    if _CONFIG_PATH.exists():
+        try:
+            existing = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     for key in _DEFAULTS:
         if key in cfg:
             try:
-                clean[key] = int(cfg[key])
+                existing[key] = int(cfg[key])
             except (ValueError, TypeError):
-                clean[key] = _DEFAULTS[key]
-    _CONFIG_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+                existing[key] = _DEFAULTS[key]
+
+    _CONFIG_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     logger.info("Heartbeat config saved to %s", _CONFIG_PATH)
+
+
+def load_prompts() -> dict[str, str | None]:
+    """
+    Return the custom wonder/work prompts stored in heartbeat_config.json.
+
+    Keys: 'wonder_prompt', 'work_prompt'.
+    Values are None when no custom prompt has been saved (built-in default is used).
+    """
+    if not _CONFIG_PATH.exists():
+        return {"wonder_prompt": None, "work_prompt": None}
+    try:
+        data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        return {
+            "wonder_prompt": data.get("wonder_prompt") or None,
+            "work_prompt":   data.get("work_prompt")   or None,
+        }
+    except Exception as e:
+        logger.warning("Could not read prompts from heartbeat_config.json: %s", e)
+        return {"wonder_prompt": None, "work_prompt": None}
+
+
+def save_prompts(wonder_prompt: str | None, work_prompt: str | None) -> None:
+    """
+    Persist custom heartbeat prompts to data/heartbeat_config.json.
+
+    Pass None (or empty string) to clear a custom prompt and revert to the built-in default.
+    """
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if _CONFIG_PATH.exists():
+        try:
+            existing = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    existing["wonder_prompt"] = wonder_prompt.strip() if wonder_prompt and wonder_prompt.strip() else None
+    existing["work_prompt"]   = work_prompt.strip()   if work_prompt   and work_prompt.strip()   else None
+
+    _CONFIG_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    logger.info("Heartbeat prompts saved to %s", _CONFIG_PATH)
 
 
 def _in_window(hour: int, start: int, end: int) -> bool:

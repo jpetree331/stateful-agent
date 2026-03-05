@@ -124,10 +124,11 @@ function TimeInput({ value, onChange }) {
 }
 
 // Cron job card (for the queue)
-function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
+function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete, onToggleLock }) {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
   const [instructionsExpanded, setInstructionsExpanded] = useState(false)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [lockBusy, setLockBusy] = useState(false)
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -147,25 +148,46 @@ function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
     }
   }
 
+  const handleToggleLock = async () => {
+    setLockBusy(true)
+    try { await onToggleLock(job.id, !job.is_locked) }
+    finally { setLockBusy(false) }
+  }
+
   return (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 hover:border-slate-600/50 transition-colors">
+    <div className={`bg-slate-800/50 border rounded-xl p-4 transition-colors ${job.is_locked ? 'border-amber-700/60 hover:border-amber-600/60' : 'border-slate-700/50 hover:border-slate-600/50'}`}>
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className={`w-2.5 h-2.5 rounded-full ${getStatusColor(job.status)}`} />
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getStatusColor(job.status)}`} />
           <h3 className="text-lg font-semibold text-slate-100">{job.name}</h3>
           {job.is_one_time && (
-            <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">
-              One-time
-            </span>
+            <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">One-time</span>
           )}
           {job.created_by === 'agent' && (
-            <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
-              Agent
+            <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">Agent</span>
+          )}
+          {job.is_locked && (
+            <span className="text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded flex items-center gap-1">
+              🔒 Locked
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Lock toggle */}
+          <button
+            onClick={handleToggleLock}
+            disabled={lockBusy}
+            title={job.is_locked ? 'Unlock — allow AI to edit' : 'Lock — prevent AI edits'}
+            className={`px-3 py-1.5 text-sm rounded-lg transition-colors disabled:opacity-50 ${
+              job.is_locked
+                ? 'bg-amber-600/30 text-amber-300 hover:bg-amber-600/50'
+                : 'bg-slate-700 text-slate-400 hover:bg-slate-600 hover:text-slate-200'
+            }`}
+          >
+            {lockBusy ? '…' : job.is_locked ? '🔒 Locked' : '🔓 Lock'}
+          </button>
+
           {job.status === 'active' ? (
             <button
               onClick={() => onPause(job.id)}
@@ -183,7 +205,9 @@ function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
           )}
           <button
             onClick={() => onEdit(job)}
-            className="px-3 py-1.5 text-sm bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+            disabled={job.is_locked}
+            title={job.is_locked ? 'Unlock to edit' : 'Edit'}
+            className="px-3 py-1.5 text-sm bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Edit
           </button>
@@ -211,7 +235,9 @@ function CronJobCard({ job, onEdit, onPause, onResume, onClone, onDelete }) {
           ) : (
             <button
               onClick={() => setShowConfirmDelete(true)}
-              className="px-3 py-1.5 text-sm bg-red-600/20 text-red-300 rounded-lg hover:bg-red-600/30 transition-colors"
+              disabled={job.is_locked}
+              title={job.is_locked ? 'Unlock to delete' : 'Delete'}
+              className="px-3 py-1.5 text-sm bg-red-600/20 text-red-300 rounded-lg hover:bg-red-600/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Delete
             </button>
@@ -503,7 +529,21 @@ function CronTab() {
   const handleDelete = async (id) => {
     try {
       const res = await fetch(`${API_BASE}/cron/jobs/${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Failed to delete job')
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.detail || 'Failed to delete job')
+      }
+      fetchData()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleToggleLock = async (id, lock) => {
+    try {
+      const endpoint = lock ? 'lock' : 'unlock'
+      const res = await fetch(`${API_BASE}/cron/jobs/${id}/${endpoint}`, { method: 'POST' })
+      if (!res.ok) throw new Error(`Failed to ${endpoint} job`)
       fetchData()
     } catch (err) {
       alert(err.message)
@@ -741,6 +781,7 @@ function CronTab() {
                 onResume={handleResume}
                 onClone={handleClone}
                 onDelete={handleDelete}
+                onToggleLock={handleToggleLock}
               />
             ))}
           </div>
@@ -1043,7 +1084,7 @@ function DataTab() {
         <div className="flex justify-center py-12 text-slate-400">Loading…</div>
       ) : !configured ? (
         <div className="bg-slate-800/30 rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">
-          <p>Set KNOWLEDGE_DATABASE_URL and create the <code className="text-slate-300">agent-data</code> database with pgvector.</p>
+          <p>Set KNOWLEDGE_DATABASE_URL and create the <code className="text-slate-300">rowan-data</code> database with pgvector.</p>
           <p className="text-sm mt-2">See .env.example for setup instructions.</p>
         </div>
       ) : files.length === 0 ? (
@@ -1259,6 +1300,7 @@ function CoreMemoryTab() {
     user: false,
     identity: false,
     ideaspace: false,
+    principles: false,
   })
 
   const fetchBlocks = async () => {
@@ -1319,7 +1361,7 @@ function CoreMemoryTab() {
     )
   }
 
-  const blockOrder = ['system_instructions', 'user', 'identity', 'ideaspace']
+  const blockOrder = ['system_instructions', 'user', 'identity', 'ideaspace', 'principles']
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -1810,9 +1852,9 @@ function ToolsTab() {
   return (
     <div className="max-w-3xl mx-auto">
       <div className="mb-8">
-        <h2 className="text-xl font-semibold text-slate-100">Agent&apos;s Tools</h2>
+        <h2 className="text-xl font-semibold text-slate-100">Rowan&apos;s Tools</h2>
         <p className="text-sm text-slate-400 mt-1">
-          All tools the agent can use, grouped by category. Ask the agent to use any of these by name or by describing what you need.
+          All tools the agent can use, grouped by category. Ask Rowan to use any of these by name or by describing what you need.
         </p>
       </div>
       <div className="space-y-6">
@@ -1950,6 +1992,13 @@ function HeartbeatTab() {
   const [cfgSaving, setCfgSaving] = useState(false)
   const [cfgMsg, setCfgMsg] = useState(null)
 
+  // Prompt editor state
+  const [prompts, setPrompts] = useState(null)          // { wonder: {text, is_custom}, work: {text, is_custom} }
+  const [promptEdits, setPromptEdits] = useState({})    // { wonder: string, work: string } — live edits
+  const [promptDirty, setPromptDirty] = useState({})    // { wonder: bool, work: bool }
+  const [promptSaving, setPromptSaving] = useState({})  // { wonder: bool, work: bool }
+  const [promptMsg, setPromptMsg] = useState({})        // { wonder: {ok,text}, work: {ok,text} }
+
   // Restart state
   const [restarting, setRestarting] = useState(false)
   const [restartCountdown, setRestartCountdown] = useState(0)
@@ -1957,14 +2006,21 @@ function HeartbeatTab() {
 
   const load = async () => {
     try {
-      const [sRes, hRes, cRes] = await Promise.all([
+      const [sRes, hRes, cRes, pRes] = await Promise.all([
         fetch(`${API_BASE}/heartbeat/status`),
         fetch(`${API_BASE}/heartbeat/sessions?limit=50`),
         fetch(`${API_BASE}/heartbeat/config`),
+        fetch(`${API_BASE}/heartbeat/prompts`),
       ])
       if (sRes.ok) setStatus(await sRes.json())
       if (hRes.ok) { const d = await hRes.json(); setSessions(d.sessions || []) }
       if (cRes.ok) { const c = await cRes.json(); setCfg(c); setCfgDirty(false) }
+      if (pRes.ok) {
+        const p = await pRes.json()
+        setPrompts(p)
+        setPromptEdits({ wonder: p.wonder.text, work: p.work.text })
+        setPromptDirty({ wonder: false, work: false })
+      }
     } finally {
       setLoading(false)
     }
@@ -2008,11 +2064,75 @@ function HeartbeatTab() {
     }
   }
 
+  const updatePromptEdit = (mode, val) => {
+    setPromptEdits(p => ({ ...p, [mode]: val }))
+    setPromptDirty(d => ({ ...d, [mode]: true }))
+    setPromptMsg(m => ({ ...m, [mode]: null }))
+  }
+
+  const savePrompt = async (mode) => {
+    setPromptSaving(s => ({ ...s, [mode]: true }))
+    setPromptMsg(m => ({ ...m, [mode]: null }))
+    try {
+      const body = {
+        wonder_prompt: mode === 'wonder' ? promptEdits.wonder : (prompts?.wonder.is_custom ? promptEdits.wonder : null),
+        work_prompt:   mode === 'work'   ? promptEdits.work   : (prompts?.work.is_custom   ? promptEdits.work   : null),
+      }
+      // Only send the one being saved
+      if (mode === 'wonder') body.work_prompt = prompts?.work.is_custom ? promptEdits.work : null
+      if (mode === 'work')   body.wonder_prompt = prompts?.wonder.is_custom ? promptEdits.wonder : null
+
+      const res = await fetch(`${API_BASE}/heartbeat/prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (res.ok) {
+        const d = await res.json()
+        setPrompts(d)
+        setPromptEdits(e => ({ ...e, [mode]: d[mode].text }))
+        setPromptDirty(dirty => ({ ...dirty, [mode]: false }))
+        setPromptMsg(m => ({ ...m, [mode]: { ok: true, text: d[mode].is_custom ? 'Custom prompt saved.' : 'Reverted to built-in default.' } }))
+      } else {
+        setPromptMsg(m => ({ ...m, [mode]: { ok: false, text: 'Save failed.' } }))
+      }
+    } catch (e) {
+      setPromptMsg(m => ({ ...m, [mode]: { ok: false, text: `Error: ${e.message}` } }))
+    } finally {
+      setPromptSaving(s => ({ ...s, [mode]: false }))
+    }
+  }
+
+  const revertPrompt = async (mode) => {
+    if (!window.confirm(`Revert ${mode} prompt to built-in default?`)) return
+    setPromptSaving(s => ({ ...s, [mode]: true }))
+    try {
+      const body = {
+        wonder_prompt: mode === 'wonder' ? null : (prompts?.wonder.is_custom ? promptEdits.wonder : null),
+        work_prompt:   mode === 'work'   ? null : (prompts?.work.is_custom   ? promptEdits.work   : null),
+      }
+      const res = await fetch(`${API_BASE}/heartbeat/prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (res.ok) {
+        const d = await res.json()
+        setPrompts(d)
+        setPromptEdits(e => ({ ...e, [mode]: d[mode].text }))
+        setPromptDirty(dirty => ({ ...dirty, [mode]: false }))
+        setPromptMsg(m => ({ ...m, [mode]: { ok: true, text: 'Reverted to built-in default.' } }))
+      }
+    } finally {
+      setPromptSaving(s => ({ ...s, [mode]: false }))
+    }
+  }
+
   const triggerRestart = async () => {
     if (!window.confirm('This will rebuild the dashboard and restart the server (~20s downtime). Continue?')) return
     setRestarting(true)
     setRestartMsg(null)
-    setRestartCountdown(25)
+    setRestartCountdown(8)
 
     // Countdown timer
     const tick = setInterval(() => {
@@ -2031,7 +2151,7 @@ function HeartbeatTab() {
         setTimeout(() => {
           setRestarting(false)
           window.location.reload()
-        }, 26000)
+        }, 9000)
       } else {
         setRestartMsg({ ok: false, text: 'Restart request failed.' })
         setRestarting(false)
@@ -2039,11 +2159,11 @@ function HeartbeatTab() {
       }
     } catch (e) {
       // Expected — server is restarting, connection dropped
-      setRestartMsg({ ok: true, text: 'Server restarting… page will reload shortly.' })
+      setRestartMsg({ ok: true, text: 'API restarting… page will reload shortly.' })
       setTimeout(() => {
         setRestarting(false)
         window.location.reload()
-      }, 26000)
+      }, 9000)
     }
   }
 
@@ -2129,6 +2249,64 @@ function HeartbeatTab() {
         </div>
       )}
 
+      {/* ── Prompt Editor ── */}
+      {prompts && (
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-6">
+          <h2 className="font-semibold text-slate-100">Heartbeat Prompts</h2>
+          <p className="text-slate-400 text-xs -mt-3">
+            Edit the instructions the agent receives at the start of each heartbeat cycle.
+            Changes take effect on the next heartbeat — no restart needed.
+          </p>
+
+          {[
+            { mode: 'wonder', label: 'Wonder', color: 'text-indigo-400', border: 'border-indigo-800', badge: 'bg-indigo-900 text-indigo-300' },
+            { mode: 'work',   label: 'Work',   color: 'text-amber-400',  border: 'border-amber-800',  badge: 'bg-amber-900  text-amber-300'  },
+          ].map(({ mode, label, color, border, badge }) => (
+            <div key={mode} className={`border ${border} rounded-lg p-4 space-y-3`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-semibold uppercase tracking-wider ${color}`}>{label} Prompt</span>
+                {prompts[mode]?.is_custom
+                  ? <span className={`text-xs px-2 py-0.5 rounded-full ${badge}`}>custom</span>
+                  : <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">built-in default</span>
+                }
+              </div>
+
+              <textarea
+                value={promptEdits[mode] ?? ''}
+                onChange={e => updatePromptEdit(mode, e.target.value)}
+                rows={12}
+                className="w-full bg-slate-950 border border-slate-700 text-slate-200 text-xs font-mono rounded-lg px-3 py-2.5 resize-y focus:outline-none focus:border-indigo-500 leading-relaxed"
+                placeholder={`Enter custom ${label} prompt…`}
+              />
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => savePrompt(mode)}
+                  disabled={!promptDirty[mode] || promptSaving[mode]}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {promptSaving[mode] ? 'Saving…' : 'Save'}
+                </button>
+                {prompts[mode]?.is_custom && (
+                  <button
+                    onClick={() => revertPrompt(mode)}
+                    disabled={promptSaving[mode]}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-40 transition-colors"
+                  >
+                    Revert to default
+                  </button>
+                )}
+                {promptMsg[mode] && (
+                  <span className={`text-xs ${promptMsg[mode].ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {promptMsg[mode].text}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── Status card ── */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
         <div className="flex items-center gap-2 mb-4">
@@ -2163,8 +2341,8 @@ function HeartbeatTab() {
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
         <h2 className="font-semibold text-slate-100 mb-1">Restart Server</h2>
         <p className="text-slate-400 text-xs mb-4">
-          Rebuilds the dashboard and restarts the API + ngrok. Use after changing .env or system prompt.
-          Expect ~20s downtime — the page will reload automatically.
+          Restarts the API server (port 8000). Use after changing .env or code.
+          Expect ~5s downtime — the page will reload automatically. Vite dev server is not affected.
         </p>
         <div className="flex items-center gap-3">
           <button
@@ -2174,7 +2352,7 @@ function HeartbeatTab() {
           >
             {restarting
               ? restartCountdown > 0 ? `Restarting… ${restartCountdown}s` : 'Reloading…'
-              : '⟳ Restart Agent'}
+              : '⟳ Restart Rowan'}
           </button>
           {restartMsg && (
             <span className={`text-xs ${restartMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>

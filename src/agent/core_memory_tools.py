@@ -18,7 +18,7 @@ def core_memory_update(block_type: str, content: str) -> str:
     adding new information to avoid accidentally removing existing content.
 
     Args:
-        block_type: One of 'user', 'identity', or 'ideaspace'.
+        block_type: One of 'user', 'identity', 'ideaspace', or 'principles'.
         content: The new full content for the block.
 
     Returns:
@@ -37,7 +37,7 @@ def core_memory_append(block_type: str, addition: str) -> str:
     existing content and reduces the risk of accidental deletion.
 
     Args:
-        block_type: One of 'user', 'identity', or 'ideaspace'.
+        block_type: One of 'user', 'identity', 'ideaspace', or 'principles'.
         addition: The text to append (will be added after existing content).
 
     Returns:
@@ -56,7 +56,7 @@ def core_memory_rollback(block_type: str) -> str:
     deletion, etc.). Each rollback restores one step back in history.
 
     Args:
-        block_type: One of 'user', 'identity', or 'ideaspace'.
+        block_type: One of 'user', 'identity', 'ideaspace', or 'principles'.
 
     Returns:
         Success message or error (e.g. if no previous version exists).
