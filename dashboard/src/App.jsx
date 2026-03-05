@@ -1858,20 +1858,113 @@ function ToolsTab() {
 
 // ==================== HEARTBEAT TAB ====================
 
+// ── Heartbeat Tab ──────────────────────────────────────────────────────────────
+
+const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => {
+  const h = i % 12 || 12
+  const ampm = i < 12 ? 'AM' : 'PM'
+  return `${h} ${ampm}`
+})
+
+function HourSelect({ value, onChange, label }) {
+  return (
+    <div>
+      <p className="text-slate-400 text-xs mb-1">{label}</p>
+      <select
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="bg-slate-800 border border-slate-600 text-slate-100 text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-indigo-500"
+      >
+        {HOUR_LABELS.map((lbl, i) => (
+          <option key={i} value={i}>{lbl}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function NumInput({ value, onChange, label, min = 1, max = 480 }) {
+  return (
+    <div>
+      <p className="text-slate-400 text-xs mb-1">{label}</p>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          value={value}
+          onChange={e => onChange(Math.max(min, Math.min(max, Number(e.target.value))))}
+          className="bg-slate-800 border border-slate-600 text-slate-100 text-sm rounded-lg px-3 py-1.5 w-24 focus:outline-none focus:border-indigo-500"
+        />
+        <span className="text-slate-500 text-xs">min</span>
+      </div>
+    </div>
+  )
+}
+
+function ScheduleVisualizer({ cfg }) {
+  // 24-cell bar, one cell per hour
+  const cells = Array.from({ length: 24 }, (_, h) => {
+    const ws = cfg.wonder_start, we = cfg.wonder_end
+    const wks = cfg.work_start, wke = cfg.work_end
+    const inNight = ws > we ? (h >= ws || h < we) : (h >= ws && h < we)
+    const inWork  = wks <= wke ? (h >= wks && h < wke) : (h >= wks || h < wke)
+    if (!inNight) return { mode: 'day',    color: 'bg-slate-700' }
+    if (inWork)   return { mode: 'work',   color: 'bg-amber-500' }
+    return              { mode: 'wonder', color: 'bg-indigo-500' }
+  })
+  return (
+    <div>
+      <p className="text-slate-400 text-xs mb-2">24-hour schedule preview</p>
+      <div className="flex gap-0.5">
+        {cells.map((c, h) => (
+          <div key={h} className="flex-1 flex flex-col items-center gap-0.5">
+            <div className={`h-5 w-full rounded-sm ${c.color}`} title={`${HOUR_LABELS[h]}: ${c.mode}`} />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-0.5 mt-0.5">
+        {[0,6,12,18,23].map(h => (
+          <div key={h} className="text-slate-600 text-xs" style={{ marginLeft: h === 0 ? 0 : `${(h/24)*100}%`, position: h === 0 ? 'static' : 'absolute' }}>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-indigo-500 mr-1" />Wonder</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-500 mr-1" />Work</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-700 mr-1" />Day</span>
+      </div>
+    </div>
+  )
+}
+
 function HeartbeatTab() {
   const [status, setStatus] = useState(null)
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedPrompts, setExpandedPrompts] = useState({})
 
+  // Config state
+  const [cfg, setCfg] = useState(null)
+  const [cfgDirty, setCfgDirty] = useState(false)
+  const [cfgSaving, setCfgSaving] = useState(false)
+  const [cfgMsg, setCfgMsg] = useState(null)
+
+  // Restart state
+  const [restarting, setRestarting] = useState(false)
+  const [restartCountdown, setRestartCountdown] = useState(0)
+  const [restartMsg, setRestartMsg] = useState(null)
+
   const load = async () => {
     try {
-      const [sRes, hRes] = await Promise.all([
+      const [sRes, hRes, cRes] = await Promise.all([
         fetch(`${API_BASE}/heartbeat/status`),
         fetch(`${API_BASE}/heartbeat/sessions?limit=50`),
+        fetch(`${API_BASE}/heartbeat/config`),
       ])
       if (sRes.ok) setStatus(await sRes.json())
       if (hRes.ok) { const d = await hRes.json(); setSessions(d.sessions || []) }
+      if (cRes.ok) { const c = await cRes.json(); setCfg(c); setCfgDirty(false) }
     } finally {
       setLoading(false)
     }
@@ -1884,6 +1977,75 @@ function HeartbeatTab() {
   }, [])
 
   const togglePrompt = (i) => setExpandedPrompts(p => ({ ...p, [i]: !p[i] }))
+
+  const updateCfg = (key, val) => {
+    setCfg(prev => ({ ...prev, [key]: val }))
+    setCfgDirty(true)
+    setCfgMsg(null)
+  }
+
+  const saveCfg = async () => {
+    setCfgSaving(true)
+    setCfgMsg(null)
+    try {
+      const res = await fetch(`${API_BASE}/heartbeat/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      })
+      if (res.ok) {
+        const d = await res.json()
+        setCfg(d.config)
+        setCfgDirty(false)
+        setCfgMsg({ ok: true, text: 'Saved. Scheduler will pick up changes on next tick.' })
+      } else {
+        setCfgMsg({ ok: false, text: 'Save failed.' })
+      }
+    } catch (e) {
+      setCfgMsg({ ok: false, text: `Error: ${e.message}` })
+    } finally {
+      setCfgSaving(false)
+    }
+  }
+
+  const triggerRestart = async () => {
+    if (!window.confirm('This will rebuild the dashboard and restart the server (~20s downtime). Continue?')) return
+    setRestarting(true)
+    setRestartMsg(null)
+    setRestartCountdown(25)
+
+    // Countdown timer
+    const tick = setInterval(() => {
+      setRestartCountdown(n => {
+        if (n <= 1) { clearInterval(tick); return 0 }
+        return n - 1
+      })
+    }, 1000)
+
+    try {
+      const res = await fetch(`${API_BASE}/heartbeat/restart`, { method: 'POST' })
+      if (res.ok) {
+        const d = await res.json()
+        setRestartMsg({ ok: true, text: d.message })
+        // After countdown, try to reload
+        setTimeout(() => {
+          setRestarting(false)
+          window.location.reload()
+        }, 26000)
+      } else {
+        setRestartMsg({ ok: false, text: 'Restart request failed.' })
+        setRestarting(false)
+        clearInterval(tick)
+      }
+    } catch (e) {
+      // Expected — server is restarting, connection dropped
+      setRestartMsg({ ok: true, text: 'Server restarting… page will reload shortly.' })
+      setTimeout(() => {
+        setRestarting(false)
+        window.location.reload()
+      }, 26000)
+    }
+  }
 
   const timeAgo = (iso) => {
     if (!iso) return null
@@ -1905,7 +2067,6 @@ function HeartbeatTab() {
 
   const isOk = (r) => r && r.trim() === 'HEARTBEAT_OK'
 
-  // Green if ran within 2× interval, yellow if overdue, grey if never
   const dotColor = !status?.last_run ? 'bg-slate-600'
     : (Date.now() - new Date(status.last_run).getTime()) < (status.interval_minutes * 2 * 60000)
     ? 'bg-emerald-400' : 'bg-yellow-400'
@@ -1914,11 +2075,65 @@ function HeartbeatTab() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      {/* Status card */}
+
+      {/* ── Schedule Config ── */}
+      {cfg && (
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-5">
+          <h2 className="font-semibold text-slate-100">Schedule</h2>
+
+          {/* Visualizer */}
+          <ScheduleVisualizer cfg={cfg} />
+
+          {/* Wonder window */}
+          <div>
+            <p className="text-xs font-medium text-indigo-400 uppercase tracking-wider mb-3">Wonder Window (overnight exploration)</p>
+            <div className="grid grid-cols-2 gap-4">
+              <HourSelect label="Start" value={cfg.wonder_start} onChange={v => updateCfg('wonder_start', v)} />
+              <HourSelect label="End"   value={cfg.wonder_end}   onChange={v => updateCfg('wonder_end', v)} />
+            </div>
+          </div>
+
+          {/* Work window */}
+          <div>
+            <p className="text-xs font-medium text-amber-400 uppercase tracking-wider mb-3">Work Window (pre-online prep — inside night window)</p>
+            <div className="grid grid-cols-2 gap-4">
+              <HourSelect label="Start" value={cfg.work_start} onChange={v => updateCfg('work_start', v)} />
+              <HourSelect label="End"   value={cfg.work_end}   onChange={v => updateCfg('work_end', v)} />
+            </div>
+          </div>
+
+          {/* Intervals */}
+          <div>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Intervals</p>
+            <div className="grid grid-cols-2 gap-4">
+              <NumInput label="Night interval (Wonder/Work)" value={cfg.night_interval} onChange={v => updateCfg('night_interval', v)} />
+              <NumInput label="Day interval"                 value={cfg.day_interval}   onChange={v => updateCfg('day_interval', v)} />
+            </div>
+          </div>
+
+          {/* Save */}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={saveCfg}
+              disabled={!cfgDirty || cfgSaving}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {cfgSaving ? 'Saving…' : 'Save Schedule'}
+            </button>
+            {cfgMsg && (
+              <span className={`text-xs ${cfgMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                {cfgMsg.text}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Status card ── */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
         <div className="flex items-center gap-2 mb-4">
           <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
-          <h2 className="font-semibold text-slate-100">Heartbeat Status</h2>
+          <h2 className="font-semibold text-slate-100">Status</h2>
         </div>
         <div className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm">
           <div>
@@ -1944,7 +2159,32 @@ function HeartbeatTab() {
         </div>
       </div>
 
-      {/* Session ledger */}
+      {/* ── Restart ── */}
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+        <h2 className="font-semibold text-slate-100 mb-1">Restart Server</h2>
+        <p className="text-slate-400 text-xs mb-4">
+          Rebuilds the dashboard and restarts the API + ngrok. Use after changing .env or system prompt.
+          Expect ~20s downtime — the page will reload automatically.
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={triggerRestart}
+            disabled={restarting}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-rose-700 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {restarting
+              ? restartCountdown > 0 ? `Restarting… ${restartCountdown}s` : 'Reloading…'
+              : '⟳ Restart Agent'}
+          </button>
+          {restartMsg && (
+            <span className={`text-xs ${restartMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+              {restartMsg.text}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Session Ledger ── */}
       <div>
         <h2 className="font-semibold text-slate-300 mb-3 text-sm uppercase tracking-wider">Session Ledger</h2>
         {sessions.length === 0 ? (

@@ -668,6 +668,8 @@ The agent starts with empty memory blocks. Example template files are provided i
 
 **The most important file is `NEWSYSINSTRUCT.txt`** (system instructions). It shapes the agent's personality, privacy rules, and behavioral guidelines. Read [`examples/memory/README.md`](examples/memory/README.md) for a full guide on customizing it.
 
+**Advanced examples:** [`examples/README.md`](examples/README.md) lists additional starting points — including `SYSINSTRUCT_EXAMPLE.txt` (Living Logs, generic privacy) and `HEARTBEAT_PROMPTS_EXAMPLE.md` (dual-phase Wonder/Work prompts). These live in the repo as examples for you to copy and customize.
+
 To pre-populate memory:
 
 1. Edit the files in `examples/memory/` (or create your own):

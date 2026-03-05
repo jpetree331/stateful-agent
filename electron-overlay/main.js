@@ -65,6 +65,13 @@ app.whenReady().then(() => {
       mainWindow.focus()
     }
   })
+
+  // Global hotkey: Ctrl+Shift+C — toggle click-through (undo when stuck)
+  globalShortcut.register('CommandOrControl+Shift+C', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('toggle-click-through')
+    }
+  })
 })
 
 app.on('will-quit', () => {

@@ -14,6 +14,7 @@ import asyncio
 import base64
 import logging
 import os
+import sys
 import traceback
 from contextlib import asynccontextmanager
 
@@ -758,6 +759,93 @@ def get_heartbeat_sessions(limit: int = 50):
             )
             for r in rows
         ]
+    }
+
+
+@api_router.get("/heartbeat/config")
+def get_heartbeat_config():
+    """Return current heartbeat schedule configuration."""
+    from .heartbeat_config import load_config
+    return load_config()
+
+
+@api_router.post("/heartbeat/config")
+def save_heartbeat_config(body: dict):
+    """
+    Save heartbeat schedule configuration to data/heartbeat_config.json.
+
+    Accepted keys (all optional, all integers):
+      wonder_start, wonder_end   — overnight wonder window (hours 0-23)
+      work_start, work_end       — work sub-window (hours 0-23)
+      day_interval               — minutes between heartbeats during day
+      night_interval             — minutes between heartbeats overnight
+    """
+    from .heartbeat_config import save_config, load_config
+    save_config(body)
+    return {"ok": True, "config": load_config()}
+
+
+@api_router.post("/heartbeat/restart")
+def restart_server():
+    """
+    Rebuild the dashboard and restart the API + ngrok in the background.
+
+    Sequence (runs in a daemon thread so the HTTP response returns immediately):
+      1. Wait 3 s (lets the response reach the browser)
+      2. Kill any process on port 8000 (old API) and 5173 (Vite dev)
+      3. Run `python scripts/start_public_dashboard.py` (builds + starts API)
+      4. Run `ngrok http 8000` in a separate detached process
+
+    The browser will lose its connection for ~15-30 s while the build runs,
+    then reconnect automatically once the new server is up.
+    """
+    import subprocess
+    import threading
+    import time as _time
+
+    def _do_restart():
+        _time.sleep(3)
+        project_root = Path(__file__).resolve().parents[2]
+        python = sys.executable
+
+        # Kill old services on ports 8000 and 5173
+        for port in (8000, 5173):
+            result = subprocess.run(
+                f'netstat -ano | findstr ":{port} "',
+                shell=True, capture_output=True, text=True,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2 and f":{port}" in parts[1]:
+                    pid = parts[-1]
+                    if pid.isdigit() and int(pid) > 4:
+                        subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
+
+        _time.sleep(1)
+
+        # Start API (builds dashboard first via start_public_dashboard.py)
+        subprocess.Popen(
+            [python, "scripts/start_public_dashboard.py"],
+            cwd=str(project_root),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if hasattr(subprocess, "CREATE_NEW_CONSOLE") else 0,
+        )
+
+        _time.sleep(20)  # Wait for build + server startup
+
+        # Start ngrok (detached — user must have ngrok on PATH)
+        try:
+            subprocess.Popen(
+                ["ngrok", "http", "8000"],
+                cwd=str(project_root),
+                creationflags=subprocess.CREATE_NEW_CONSOLE if hasattr(subprocess, "CREATE_NEW_CONSOLE") else 0,
+            )
+        except FileNotFoundError:
+            pass  # ngrok not on PATH — user starts it manually
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {
+        "ok": True,
+        "message": "Restart initiated. Dashboard will rebuild (~20s) then reconnect automatically.",
     }
 
 

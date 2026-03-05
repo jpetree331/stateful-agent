@@ -2,7 +2,7 @@
 LangChain tools for the journal: save and read entries.
 
 - save_journal_entry: The agent saves full wonder/reflection/research content to the journal.
-- read_journal: The agent reads journal entries (his own writings, summaries, user notes).
+- read_journal: The agent reads journal entries (its own writings, summaries, user notes).
 """
 from __future__ import annotations
 

@@ -2,11 +2,14 @@
 
 This folder contains template files for the agent's core memory blocks. Use these to bootstrap your agent before the first conversation, or import them to seed the memory system with initial content.
 
+**See also [`examples/README.md`](../README.md)** — lists all examples including advanced system instructions and heartbeat prompts. Those files are there for you to use as a starting point.
+
 ## Files
 
 | File | Block | Purpose |
 |------|-------|---------|
 | `NEWSYSINSTRUCT.txt` | `system_instructions` | Read-only behavioral guidelines. **The most important file.** Start here. |
+| `SYSINSTRUCT_EXAMPLE.txt` | — | **Advanced example** with Living Logs, generic privacy rules. Copy/merge into `NEWSYSINSTRUCT.txt` and customize. |
 | `IDENTITY.txt` | `identity` | The agent's self-concept, values, and personality |
 | `USER.txt` | `user` | Information about the primary user |
 | `IDEASPACE.txt` | `ideaspace` | Working memory — ongoing projects and open threads |

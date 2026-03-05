@@ -143,6 +143,15 @@ export default function App() {
     return cleanup
   }, [isElectron])
 
+  // ── Listen for hotkey to toggle click-through (undo when stuck) ─────────────
+  useEffect(() => {
+    if (!isElectron) return
+    const cleanup = window.electronAPI.onToggleClickThrough(() => {
+      setClickThrough((v) => !v)
+    })
+    return cleanup
+  }, [isElectron])
+
   // ── Load conversation history ────────────────────────────────────────────────
   const loadHistory = useCallback(async () => {
     try {
@@ -423,7 +432,7 @@ export default function App() {
                 className={`relative w-9 h-5 rounded-full transition-colors ${
                   clickThrough ? 'bg-amber-500' : 'bg-slate-600'
                 }`}
-                title={clickThrough ? 'Click-through ON (clicks go to WoW)' : 'Click-through OFF (overlay is interactive)'}
+                title={clickThrough ? 'Click-through ON — press Ctrl+Shift+C to turn off' : 'Click-through OFF (overlay is interactive)'}
               >
                 <span
                   className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
@@ -453,6 +462,7 @@ export default function App() {
           <div className="text-xs text-slate-600 space-y-0.5 pt-0.5 border-t border-white/5">
             <div><kbd className="text-slate-500">Ctrl+Shift+R</kbd> — show/hide overlay</div>
             <div><kbd className="text-slate-500">Ctrl+Shift+S</kbd> — screenshot + open</div>
+            <div><kbd className="text-slate-500">Ctrl+Shift+C</kbd> — toggle click-through (undo when stuck)</div>
           </div>
         </div>
       )}

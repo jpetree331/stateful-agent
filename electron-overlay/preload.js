@@ -21,4 +21,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('trigger-screenshot', callback)
     return () => ipcRenderer.removeListener('trigger-screenshot', callback)
   },
+
+  // Listen for hotkey to toggle click-through (undo when stuck)
+  onToggleClickThrough: (callback) => {
+    ipcRenderer.on('toggle-click-through', callback)
+    return () => ipcRenderer.removeListener('toggle-click-through', callback)
+  },
 })
