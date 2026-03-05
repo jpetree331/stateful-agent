@@ -1,8 +1,8 @@
 """
 LangChain tools for the journal: save and read entries.
 
-- save_journal_entry: Rowan saves full wonder/reflection/research content to the journal.
-- read_journal: Rowan reads journal entries (his own writings, summaries, user notes).
+- save_journal_entry: The agent saves full wonder/reflection/research content to the journal.
+- read_journal: The agent reads journal entries (its own writings, summaries, user notes).
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def read_journal(
     Read journal entries from the dashboard Journal tab.
 
     Use this to review your own wonders, reflections, research, summaries,
-    heartbeats, or Jess's notes. Filter by date and/or type as needed.
+    heartbeats, or the user's notes. Filter by date and/or type as needed.
 
     Args:
         year_month: Filter by month as YYYY-MM (e.g. "2026-03"). Omit for recent entries.
@@ -155,7 +155,7 @@ def save_journal_entry(
                             """
                             INSERT INTO journal_entries
                                 (entry_date, entry_type, title, content, word_count, source, created_at, updated_at)
-                            VALUES (%s, %s, %s, %s, %s, 'rowan', %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, 'agent', %s, %s)
                             RETURNING id
                             """,
                             (edate, entry_type, title or "Daily Summary", content.strip(),
@@ -166,7 +166,7 @@ def save_journal_entry(
                         """
                         INSERT INTO journal_entries
                             (entry_date, entry_type, title, content, word_count, source, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, 'rowan', %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, 'agent', %s, %s)
                         RETURNING id
                         """,
                         (edate, entry_type, title or entry_type.title(), content.strip(),

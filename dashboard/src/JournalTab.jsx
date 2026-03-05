@@ -284,7 +284,7 @@ function DayChatSection({ dateStr }) {
             <p className="text-sm text-slate-500 italic">No chat messages this day.</p>
           ) : messages.map((msg, i) => {
             const isUser = msg.role === 'user'
-            const name = msg.metadata?.role_display || (isUser ? 'Jess' : 'Rowan')
+            const name = msg.metadata?.role_display || (isUser ? 'User' : 'Agent')
             return (
               <div key={i} className={`flex gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
@@ -417,7 +417,7 @@ function DaySection({ day, onDelete, onNoteAdded, onEntryUpdated, entryFilter })
 
       {!collapsed && (
         <div className="space-y-2 pl-0">
-          {/* Rowan's entries */}
+          {/* Agent's entries */}
           {day.entries.map(entry => (
             <EntryCard
               key={entry.id}
@@ -655,7 +655,7 @@ export default function JournalTab() {
         <div className="flex-1 min-w-0">
           <h2 className="text-xl font-semibold text-slate-100">Journal</h2>
           <p className="text-sm text-slate-400 mt-0.5">
-            Rowan's daily outputs, reflections, and your notes — all in one place.
+            The agent's daily outputs, reflections, and your notes — all in one place.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -738,7 +738,7 @@ export default function JournalTab() {
           <p className="text-3xl">📖</p>
           <p className="text-slate-400">No entries for {formatMonthLabel(currentMonth)}.</p>
           <p className="text-slate-500 text-sm">
-            Entries appear here automatically when Rowan runs cron jobs or writes daily summaries.
+            Entries appear here automatically when the agent runs cron jobs or writes daily summaries.
           </p>
           <button
             onClick={() => setShowNewNote(true)}

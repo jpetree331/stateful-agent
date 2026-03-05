@@ -1,14 +1,14 @@
 """
-Journal: unified daily log of Rowan's outputs and user notes.
+Journal: unified daily log of the agent's outputs and user notes.
 
-Stores in local PostgreSQL (rowan-data, same DB as Knowledge Bank).
+Stores in local PostgreSQL (agent-data, same DB as Knowledge Bank).
 Tables: journal_entries
 
 Entry types:
   'wonder'      — 1 AM Wonder heartbeat output
   'reflection'  — 2 AM Reflect heartbeat output
   'research'    — research heartbeat output (any topic)
-  'summary'     — daily summary written by Rowan
+  'summary'     — daily summary written by the agent
   'user_note'   — journal note written by the user
   'heartbeat'   — generic heartbeat output (fallback if type undetected)
 

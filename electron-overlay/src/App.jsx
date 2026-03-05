@@ -102,7 +102,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [error, setError] = useState(null)
-  const [status, setStatus] = useState(null) // e.g. "Analyzing screenshot..." or "Waiting for Rowan..."
+  const [status, setStatus] = useState(null) // e.g. "Analyzing screenshot..." or "Waiting for Agent..."
 
   // Overlay controls
   const [opacity, setOpacity] = useState(0.92)
@@ -254,7 +254,7 @@ export default function App() {
       }
 
       // Step 3: Send the text-only message to the agent
-      setStatus('Waiting for Rowan...')
+      setStatus('Waiting for Agent...')
       const res = await fetchWithTimeout(
         `${API_BASE}/chat`,
         {
@@ -358,7 +358,7 @@ export default function App() {
         {/* Left: name + status dot */}
         <div className="flex items-center gap-2 no-drag">
           <div className="w-2 h-2 rounded-full bg-emerald-400" title="Agent online" />
-          <span className="text-xs font-semibold text-slate-200 tracking-wide">ROWAN</span>
+          <span className="text-xs font-semibold text-slate-200 tracking-wide">AGENT</span>
           <span className="text-xs text-slate-500">overlay</span>
         </div>
 

@@ -3,7 +3,7 @@
 Create the Knowledge Bank database and enable pgvector. No psql/createdb needed.
 Run: python -m scripts.setup_knowledge_db
 
-Requires: KNOWLEDGE_DATABASE_URL in .env (e.g. postgresql://postgres:password@localhost:5432/rowan-data)
+Requires: KNOWLEDGE_DATABASE_URL in .env (e.g. postgresql://postgres:password@localhost:5432/agent-data)
 """
 from pathlib import Path
 import sys
@@ -26,7 +26,7 @@ def main():
 
     parsed = urlparse(url)
     path_parts = parsed.path.strip("/").split("/")
-    db_name = path_parts[0] if path_parts else "rowan-data"
+    db_name = path_parts[0] if path_parts else "agent-data"
 
     # Connect to 'postgres' to create the target DB
     base_path = "/postgres" if parsed.path else "/postgres"

@@ -1,5 +1,5 @@
 """
-FastAPI server for the Rowan dashboard.
+FastAPI server for the agent dashboard.
 
 Local dev: Run API + Vite dev server (npm run dev in dashboard/). Open http://localhost:5173.
 Public (ngrok): Build dashboard (npm run build), run API, then ngrok http 8000. One URL serves both.
@@ -43,7 +43,7 @@ logging.basicConfig(
         ),
     ],
 )
-logger = logging.getLogger("rowan.api")
+logger = logging.getLogger("agent.api")
 
 from .core_memory import get_all_blocks, update_block, update_system_instructions
 from .cron_jobs import (
@@ -356,7 +356,7 @@ async def telegram_webhook(request: Request):
 
 @api_router.get("/tools")
 def get_tools():
-    """Get all tools Rowan has access to, grouped by category."""
+    """Get all tools the agent has access to, grouped by category."""
     return {"categories": get_tool_list_for_api()}
 
 

@@ -1084,7 +1084,7 @@ function DataTab() {
         <div className="flex justify-center py-12 text-slate-400">Loading…</div>
       ) : !configured ? (
         <div className="bg-slate-800/30 rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">
-          <p>Set KNOWLEDGE_DATABASE_URL and create the <code className="text-slate-300">rowan-data</code> database with pgvector.</p>
+          <p>Set KNOWLEDGE_DATABASE_URL and create the <code className="text-slate-300">agent-data</code> database with pgvector.</p>
           <p className="text-sm mt-2">See .env.example for setup instructions.</p>
         </div>
       ) : files.length === 0 ? (
@@ -1854,9 +1854,9 @@ function ToolsTab() {
   return (
     <div className="max-w-3xl mx-auto">
       <div className="mb-8">
-        <h2 className="text-xl font-semibold text-slate-100">Rowan&apos;s Tools</h2>
+        <h2 className="text-xl font-semibold text-slate-100">Agent&apos;s Tools</h2>
         <p className="text-sm text-slate-400 mt-1">
-          All tools the agent can use, grouped by category. Ask Rowan to use any of these by name or by describing what you need.
+          All tools the agent can use, grouped by category. Ask the agent to use any of these by name or by describing what you need.
         </p>
       </div>
       <div className="space-y-6">
@@ -2397,7 +2397,7 @@ function HeartbeatTab() {
           >
             {restarting
               ? restartCountdown > 0 ? `Restarting… ${restartCountdown}s` : 'Reloading…'
-              : '⟳ Restart Rowan'}
+              : '⟳ Restart Agent'}
           </button>
           {restartMsg && (
             <span className={`text-xs ${restartMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
