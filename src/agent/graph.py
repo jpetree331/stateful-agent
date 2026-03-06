@@ -67,6 +67,85 @@ from .wikipedia_tools import wikipedia_lookup
 from .windows_tools import create_shortcut, notify
 from .youtube_tools import youtube_search, youtube_transcript
 
+def _is_rate_limit_error(e: Exception) -> bool:
+    """True if this looks like a rate limit or quota-exceeded error (429)."""
+    msg = str(e).lower()
+    if "429" in msg or "rate limit" in msg or "quota" in msg or "usage limit" in msg:
+        return True
+    try:
+        import openai
+        if isinstance(e, getattr(openai, "RateLimitError", type(None))):
+            return True
+        if getattr(e, "status_code", None) == 429:
+            return True
+    except (ImportError, AttributeError):
+        pass
+    return False
+
+
+def _build_llm_for_config(api_key: str, base_url: str | None, model: str) -> BaseChatOpenAI:
+    """Build ChatOpenAI or ChatKimi for a given (api_key, base_url, model) config."""
+    kwargs: dict = {"model": model, "temperature": 0, "api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    if base_url and "kimi.com/coding" in base_url.lower():
+        kwargs["default_headers"] = {
+            "User-Agent": "KimiCLI/1.13.0 (kimi-agent-sdk/0.1.4 kimi-code-for-vs-code/0.4.3 0.1.4)"
+        }
+        return ChatKimi(**kwargs)
+    return ChatOpenAI(**kwargs)
+
+
+def _get_llm_configs() -> list[tuple[str, str | None, str]]:
+    """Return list of (api_key, base_url, model) for primary and backup providers."""
+    configs = []
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    base = os.environ.get("OPENAI_BASE_URL", "").strip() or None
+    model = os.environ.get("OPENAI_MODEL_NAME", "").strip() or "gpt-4o-mini"
+    if key and key not in ("sk-...", "sk-"):
+        configs.append((key, base, model))
+
+    key_b = os.environ.get("OPENAI_API_KEY_BACKUP", "").strip()
+    base_b = os.environ.get("OPENAI_BASE_URL_BACKUP", "").strip() or None
+    model_b = os.environ.get("OPENAI_MODEL_NAME_BACKUP", "").strip() or model
+    if key_b and key_b not in ("sk-...", "sk-"):
+        configs.append((key_b, base_b or base, model_b))
+
+    return configs
+
+
+class LLMWithFallback(ChatOpenAI):
+    """
+    Chat model that tries multiple provider configs on rate limit (429).
+    Each config can have its own base_url and model (e.g. synthetic.new primary,
+    Kimi Code backup). Set OPENAI_BASE_URL_BACKUP and OPENAI_MODEL_NAME_BACKUP
+    when the backup uses a different provider. Extends ChatOpenAI so bind_tools works.
+    """
+
+    def __init__(self, configs: list[tuple[str, str | None, str]]):
+        api_key, base_url, model = configs[0]
+        kwargs: dict = {"model": model, "temperature": 0, "api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        super().__init__(**kwargs)
+        self._llms = [_build_llm_for_config(k, b, m) for k, b, m in configs]
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        last_error = None
+        for i, llm in enumerate(self._llms):
+            try:
+                return llm._generate(messages, stop, run_manager, **kwargs)
+            except Exception as e:
+                if _is_rate_limit_error(e) and i < len(self._llms) - 1:
+                    last_error = e
+                    logger.warning("Rate limit with provider %d, trying backup...", i + 1)
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("No providers succeeded")
+
+
 class ChatKimi(BaseChatOpenAI):
     """ChatOpenAI-compatible class for Kimi Code endpoint (api.kimi.com/coding/v1).
 
@@ -487,16 +566,15 @@ def _force_tts_via_tool_choice(user_message: str, first_response: str | None) ->
     Returns the TTS tool output string, or None if something went wrong.
     """
     try:
-        base_url = os.environ.get("OPENAI_BASE_URL") or None
-        model = os.environ.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"
-        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-
-        force_llm = ChatOpenAI(
-            model=model,
-            temperature=0,
-            api_key=api_key,
-            **({"base_url": base_url} if base_url else {}),
-        ).bind_tools(
+        configs = _get_llm_configs()
+        if not configs:
+            return None
+        if len(configs) > 1:
+            force_llm = LLMWithFallback(configs)
+        else:
+            api_key, base_url, model = configs[0]
+            force_llm = _build_llm_for_config(api_key, base_url, model)
+        force_llm = force_llm.bind_tools(
             [tts_generate_voice_message],
             tool_choice="tts_generate_voice_message",
         )
@@ -663,33 +741,18 @@ def _build_core_memory_prompt(state) -> list[BaseMessage]:
 
 def build_agent():
     """Build the ReAct agent with persistence."""
-    base_url = os.environ.get("OPENAI_BASE_URL") or None
-    model = os.environ.get("OPENAI_MODEL_NAME") or "gpt-4o-mini"
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    configs = _get_llm_configs()
+    if not configs:
+        raise ValueError(
+            "OPENAI_API_KEY is required. Set it in .env. "
+            "When using a custom base URL (e.g. synthetic.new, Chutes, Kimi), also set OPENAI_BASE_URL."
+        )
 
-    model_kwargs = {"model": model, "temperature": 0}
-    if base_url:
-        model_kwargs["base_url"] = base_url
-        if not api_key or api_key in ("sk-...", "sk-"):
-            raise ValueError(
-                "OPENAI_API_KEY is required when using a custom base URL (e.g. Chutes AI). "
-                "Set it in .env to your Chutes API key (format: cpk_...). Get it from your Chutes dashboard."
-            )
-        model_kwargs["api_key"] = api_key.strip()
-
-    # Kimi Code endpoint enforces a client whitelist via User-Agent.
-    # The exact UA comes from the Kimi Code console usage history — it must match
-    # a whitelisted client (KimiCLI) to avoid the access_terminated_error 403.
-    # We also use ChatKimi instead of ChatOpenAI to round-trip reasoning_content —
-    # Kimi's thinking mode returns it in responses, but ChatOpenAI drops non-standard
-    # fields, causing 400s on the second tool-call round within a single turn.
-    if base_url and "kimi.com/coding" in base_url.lower():
-        model_kwargs["default_headers"] = {
-            "User-Agent": "KimiCLI/1.13.0 (kimi-agent-sdk/0.1.4 kimi-code-for-vs-code/0.4.3 0.1.4)"
-        }
-        llm = ChatKimi(**model_kwargs)
+    if len(configs) > 1:
+        llm = LLMWithFallback(configs)
     else:
-        llm = ChatOpenAI(**model_kwargs)
+        api_key, base_url, model = configs[0]
+        llm = _build_llm_for_config(api_key, base_url, model)
     checkpointer = get_checkpointer()
 
     agent = create_react_agent(

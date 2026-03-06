@@ -221,7 +221,6 @@ def save_daily_summary(
                         (edate, content.strip(), _word_count(content), now, now),
                     )
                 row = cur.fetchone()
-                row = cur.fetchone()
             conn.commit()
             return row["id"] if row else None
         finally:

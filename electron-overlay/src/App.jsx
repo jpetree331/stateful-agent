@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'http://localhost:8000/api'
 const THREAD_ID = 'main'
 // How long to wait for the agent to respond before giving up (ms).
 // Kimi-K2.5 with tool calls can take 60-90s on complex queries.
@@ -153,14 +153,22 @@ export default function App() {
   }, [isElectron])
 
   // ── Load conversation history ────────────────────────────────────────────────
+  const [loadError, setLoadError] = useState(null)
   const loadHistory = useCallback(async () => {
     try {
+      setLoadError(null)
       const res = await fetch(`${API_BASE}/messages?thread_id=${THREAD_ID}&limit=100`)
-      if (!res.ok) return
+      if (!res.ok) {
+        const text = await res.text()
+        console.warn('[Overlay] messages fetch failed:', res.status, text.slice(0, 200))
+        setLoadError(`API ${res.status} — is the agent running?`)
+        return
+      }
       const data = await res.json()
       setMessages(data.messages || [])
-    } catch {
-      // silently ignore — agent may not be running yet
+    } catch (err) {
+      console.warn('[Overlay] messages fetch error:', err)
+      setLoadError('Could not reach API — is the agent running?')
     } finally {
       setHistoryLoaded(true)
     }
@@ -475,9 +483,18 @@ export default function App() {
           </div>
         ) : visibleMessages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <p className="text-xs text-slate-500">No messages yet.</p>
-              <p className="text-xs text-slate-600 mt-1">Type below or press Ctrl+Shift+S to send a screenshot.</p>
+            <div className="text-center px-4">
+              {loadError ? (
+                <>
+                  <p className="text-xs text-amber-400">{loadError}</p>
+                  <p className="text-xs text-slate-600 mt-1">Retrying every 10s…</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500">No messages yet.</p>
+                  <p className="text-xs text-slate-600 mt-1">Type below or press Ctrl+Shift+S to send a screenshot.</p>
+                </>
+              )}
             </div>
           </div>
         ) : null}

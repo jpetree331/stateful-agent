@@ -168,6 +168,7 @@ def _run_cron_job_sync(job: dict) -> None:
     )
 
     # Save output to journal (use last_ai_content from chat, fallback to DB)
+    output = None
     try:
         from .db import get_last_assistant_content
         from .graph import _get_last_ai_content
@@ -185,6 +186,29 @@ def _run_cron_job_sync(job: dict) -> None:
             )
     except Exception as _je:
         logger.warning("Journal save failed for cron job %s: %s", job_id, _je)
+
+    # If this is a summary-type cron job, also save to the daily_summaries context table.
+    # This bridges the gap where the agent writes the summary as its response text but
+    # doesn't explicitly call the daily_summary_write tool — or where journal.py saves
+    # to local Postgres (agent-data) but Railway's daily_summaries table is never updated.
+    # Only auto-saves if the agent didn't already call daily_summary_write for today.
+    try:
+        job_name_lower = (job.get("name") or "").lower()
+        if output and ("summary" in job_name_lower or "summarize" in job_name_lower):
+            from .db import upsert_daily_summary, get_connection
+            summary_date = current_time.date().isoformat()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT id FROM daily_summaries WHERE summary_date = %s",
+                        (summary_date,),
+                    )
+                    already_saved = _cur.fetchone()
+            if not already_saved:
+                upsert_daily_summary(summary_date, output)
+                logger.info("Auto-saved cron summary to daily_summaries for %s", summary_date)
+    except Exception as _dse:
+        logger.warning("Auto-save to daily_summaries failed for cron job %s: %s", job_id, _dse)
 
     record_run(job_id, "success")
     logger.info(f"Cron job {job_id} completed successfully")

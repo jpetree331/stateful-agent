@@ -182,9 +182,14 @@ app.add_middleware(DashboardAuthMiddleware)
 # Example: CORS_ORIGINS=https://your-dashboard.netlify.app
 _extra_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 
+# Dashboard: 5173; overlay dev: 5174; overlay built: Electron loads from file:// (origin "null")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"] + _extra_origins,
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+        "null",
+    ] + _extra_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -956,6 +961,32 @@ def restart_server():
         "ok": True,
         "message": "API restarting… reconnects in ~5s. Vite dev server is unchanged.",
     }
+
+
+@api_router.post("/overlay/launch")
+def launch_overlay():
+    """
+    Launch the Electron game overlay in the background.
+    Opens the always-on-top chat overlay for use while gaming.
+    """
+    import subprocess
+
+    project_root = Path(__file__).resolve().parents[2]
+    overlay_dir = project_root / "electron-overlay"
+    if not overlay_dir.is_dir():
+        raise HTTPException(status_code=404, detail="electron-overlay folder not found")
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        subprocess.Popen(
+            ["npm", "run", "electron-dev"],
+            cwd=str(overlay_dir),
+            shell=True,
+            creationflags=creationflags,
+        )
+        return {"ok": True, "message": "Game overlay launching. It may take a few seconds to appear."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.get("/health")

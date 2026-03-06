@@ -32,7 +32,7 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5174')
-    // Uncomment to open DevTools in dev mode:
+    // Uncomment to debug overlay fetch issues:
     // mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'))

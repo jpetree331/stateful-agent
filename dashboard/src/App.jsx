@@ -2504,13 +2504,34 @@ const TABS = [
 // Main App Component
 function App() {
   const [activeTab, setActiveTab] = useState('chat')
+  const [overlayLaunching, setOverlayLaunching] = useState(false)
 
   return (
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
-      {/* Header — title only */}
+      {/* Header — title + Game Overlay button */}
       <header className="border-b border-slate-800 flex-shrink-0">
-        <div className="px-5 py-3">
+        <div className="px-5 py-3 flex items-center justify-between">
           <h1 className="text-xl font-semibold text-slate-100">Agent</h1>
+          <button
+            type="button"
+            onClick={async () => {
+              setOverlayLaunching(true)
+              try {
+                const res = await fetch(`${API_BASE}/overlay/launch`, { method: 'POST' })
+                const d = await res.json().catch(() => ({}))
+                if (!res.ok) throw new Error(d.detail || 'Failed to launch')
+              } catch (e) {
+                alert(e.message || 'Failed to launch overlay')
+              } finally {
+                setOverlayLaunching(false)
+              }
+            }}
+            disabled={overlayLaunching}
+            className="text-sm px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-slate-100 border border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Launch the always-on-top game overlay for chatting while gaming"
+          >
+            {overlayLaunching ? 'Launching…' : 'Game Overlay'}
+          </button>
         </div>
       </header>
 
