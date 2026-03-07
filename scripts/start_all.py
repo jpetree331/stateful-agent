@@ -135,7 +135,7 @@ def start_background(dashboard_port: int) -> None:
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        print(f"  {name:12} → logs/services/{name}.log")
+        print(f"  {name:12} -> logs/services/{name}.log")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -192,11 +192,11 @@ def main():
     print(f"\nDashboard:")
     print(f"  Local:   {dashboard_local}")
     if dashboard_network:
-        print(f"  Network: {dashboard_network}  ← share this with other devices on the same WiFi/LAN")
+        print(f"  Network: {dashboard_network}  (share this with other devices on the same WiFi/LAN)")
     print("API, Dashboard, and Heartbeat running in the background.\n")
-    print("─" * 60)
+    print("-" * 60)
     print("Agent chat starting below. Type 'quit' or Ctrl+C to exit.")
-    print("─" * 60 + "\n")
+    print("-" * 60 + "\n")
 
     # Run the interactive chat in the foreground of this terminal.
     # Background services are separate processes — they keep running after this exits.
