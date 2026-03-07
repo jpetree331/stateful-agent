@@ -22,6 +22,7 @@ Manual kill commands (if you ever need them without this script):
 """
 
 import argparse
+import socket
 import subprocess
 import sys
 import time
@@ -125,6 +126,18 @@ def start_background() -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
+def _get_lan_ip() -> str:
+    """Return the machine's LAN IP address (best-effort)."""
+    try:
+        # Connect to an external address to discover the outbound interface IP.
+        # No data is actually sent.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "unknown"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Launch all agent services")
     parser.add_argument(
@@ -139,16 +152,23 @@ def main():
     print("Starting background services...")
     start_background()
 
+    lan_ip = _get_lan_ip()
     print("Waiting for servers to start (API can take ~10s to load agent)...")
     time.sleep(5)
     webbrowser.open("http://localhost:5173")
 
     if args.no_chat:
-        print("Done. Dashboard: http://localhost:5173")
+        print("Done.")
+        print(f"  Local:   http://localhost:5173")
+        if lan_ip != "unknown":
+            print(f"  Network: http://{lan_ip}:5173  (share this with devices on the same WiFi)")
         print("Logs: logs/services/")
         return
 
-    print(f"\nDashboard: http://localhost:5173")
+    print(f"\nDashboard:")
+    print(f"  Local:   http://localhost:5173")
+    if lan_ip != "unknown":
+        print(f"  Network: http://{lan_ip}:5173  ← share this with other devices on the same WiFi/LAN")
     print("API, Dashboard, and Heartbeat running in the background.\n")
     print("─" * 60)
     print("Agent chat starting below. Type 'quit' or Ctrl+C to exit.")

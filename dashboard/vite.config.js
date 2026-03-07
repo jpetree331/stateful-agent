@@ -26,6 +26,10 @@ const proxyHeaders = dashboardPassword
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // host: true binds to 0.0.0.0 so the dashboard is reachable from other
+    // devices on the same network via the host machine's LAN IP address.
+    // e.g. http://192.168.1.42:5173 from another PC or phone on the same WiFi.
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
