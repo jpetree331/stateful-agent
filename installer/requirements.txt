@@ -1,0 +1,6 @@
+customtkinter>=5.2.2
+pyinstaller>=6.0
+packaging>=24.0
+Pillow>=10.0
+requests>=2.31
+psycopg[binary]>=3.1
