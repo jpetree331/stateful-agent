@@ -125,6 +125,25 @@ class InstallScreen(ctk.CTkFrame):
         project = self._install_path
         success = True
 
+        # Sanity-check the install path before doing anything
+        from pathlib import Path as _Path
+        if not (_Path(project) / "requirements.txt").exists():
+            self._log_line(f"ERROR: requirements.txt not found in: {project}")
+            self._log_line("This doesn't look like the agent's project folder.")
+            self._log_line("Go back to the Welcome screen and select the correct folder.")
+            for step_id in self._steps:
+                self._set_step_done(step_id, ok=False)
+            self.after(0, lambda: (
+                self._status_label.configure(
+                    text="Wrong install folder — go back and fix the path.",
+                    text_color=COLOR_RED,
+                ),
+                self._install_btn.configure(text="Retry", state="normal"),
+                self._back_btn.configure(state="normal"),
+            ))
+            self._running = False
+            return
+
         # ── Step 1: Write .env ────────────────────────────────────────────────
         self._set_step("env", 0.1, "Writing…")
         try:
@@ -195,15 +214,24 @@ class InstallScreen(ctk.CTkFrame):
         self._set_step_done("db", ok=db_ok)
 
         # ── Step 6: DB migration ──────────────────────────────────────────────
+        # Only run if pip succeeded (venv python exists) and a DATABASE_URL is set.
+        # Migration connects to the DB — no point running if packages aren't installed.
         self._set_step("migrate", 0.1, "Running migrations…")
         migrate_ok = True
         venv_python = str(Path(project) / ".venv" / "Scripts" / "python.exe")
-        for msg, progress in run_db_migration(project, venv_python):
-            self._log_line(msg)
-            self._set_step("migrate", progress, "")
-            if "ERROR" in msg.upper():
-                migrate_ok = False
-        self._set_step_done("migrate", ok=migrate_ok)
+        if not pip_ok:
+            self._log_line("Skipping migration — Python packages did not install successfully.")
+            self._set_step_done("migrate", ok=True)
+        elif not Path(venv_python).exists():
+            self._log_line("Skipping migration — venv Python not found.")
+            self._set_step_done("migrate", ok=True)
+        else:
+            for msg, progress in run_db_migration(project, venv_python):
+                self._log_line(msg)
+                self._set_step("migrate", progress, "")
+                if "ERROR" in msg.upper():
+                    migrate_ok = False
+            self._set_step_done("migrate", ok=migrate_ok)
 
         # ── Done ──────────────────────────────────────────────────────────────
         self._running = False

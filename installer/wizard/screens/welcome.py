@@ -151,12 +151,36 @@ class WelcomeScreen(ctk.CTkFrame):
         self._next_btn.grid(row=0, column=1, sticky="e")
 
     def _default_install_path(self) -> str:
-        """Return the project root — the parent of the installer directory."""
+        """
+        Return the project root — the folder containing requirements.txt and src/.
+        When running as a frozen EXE, start from the EXE's directory and walk up/down
+        to find the real project root. This handles GitHub zip extractions that
+        produce double-nested folders like stateful-agent-master/stateful-agent-master/.
+        """
         import sys
+
+        def _looks_like_project_root(p: Path) -> bool:
+            return (p / "requirements.txt").exists() and (p / "src").exists()
+
         if getattr(sys, "frozen", False):
-            # Running as PyInstaller EXE — installer.exe is in the project root
-            return str(Path(sys.executable).parent)
-        # Running as script — go up from installer/
+            exe_dir = Path(sys.executable).parent
+
+            # Check the EXE's own directory first (normal case)
+            if _looks_like_project_root(exe_dir):
+                return str(exe_dir)
+
+            # Check one level down (GitHub zip double-nesting: outer/inner/)
+            try:
+                for child in exe_dir.iterdir():
+                    if child.is_dir() and _looks_like_project_root(child):
+                        return str(child)
+            except Exception:
+                pass
+
+            # Fall back to EXE directory
+            return str(exe_dir)
+
+        # Running as script — go up from installer/wizard/screens/ to project root
         return str(Path(__file__).resolve().parents[3])
 
     def _browse(self) -> None:

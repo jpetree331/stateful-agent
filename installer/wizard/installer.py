@@ -430,6 +430,10 @@ def npm_install(project_root: str) -> Generator[tuple[str, float], None, None]:
         yield "Dashboard directory not found, skipping npm install.", 1.0
         return
 
+    if not (dashboard_dir / "package.json").exists():
+        yield f"ERROR: package.json not found in {dashboard_dir}. Check your install path.", 1.0
+        return
+
     npm = shutil.which("npm")
     if not npm:
         yield "ERROR: npm not found. Install Node.js first.", 1.0
@@ -437,11 +441,25 @@ def npm_install(project_root: str) -> Generator[tuple[str, float], None, None]:
 
     yield "Installing dashboard npm packages...", 0.05
     steps = 0
-    for line, is_err in _run_stream([npm, "install"], timeout=300):
+    # Run npm install from within the dashboard/ directory
+    proc = subprocess.Popen(
+        [npm, "install"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=str(dashboard_dir),
+        creationflags=_NO_WINDOW,
+    )
+    for line in proc.stdout:
+        line = line.rstrip()
         if line.strip():
             steps += 1
             progress = min(0.05 + steps * 0.01, 0.95)
             yield line, progress
+    proc.wait(timeout=300)
+    if proc.returncode != 0:
+        yield f"ERROR: npm install exited with code {proc.returncode}", 1.0
+        return
 
     yield "Dashboard npm packages installed.", 1.0
 
