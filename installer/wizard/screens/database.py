@@ -200,80 +200,39 @@ class DatabaseScreen(ctk.CTkFrame):
         panel = ctk.CTkFrame(parent, fg_color="transparent")
         panel.columnconfigure(0, weight=1)
 
-        # PostgreSQL status
-        pg = detect_postgres()
-        pv = detect_pgvector(pg.path) if pg.found else None
-
-        status_frame = ctk.CTkFrame(panel, fg_color=COLOR_CARD, corner_radius=6)
-        status_frame.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        status_frame.columnconfigure(1, weight=1)
-
-        def _status_row(parent, row_idx, label, result):
-            ok = result.found if result else False
-            note = result.note if result else "Not checked"
-            color = COLOR_GREEN if ok else (COLOR_YELLOW if result and result.note and result.found else COLOR_RED)
-            icon = "✓" if ok else ("⚠" if result and result.note and result.found else "✗")
-            ctk.CTkLabel(parent, text=icon, font=FONT_BODY, text_color=color, width=28).grid(
-                row=row_idx, column=0, padx=(12, 4), pady=6
-            )
-            ctk.CTkLabel(parent, text=label, font=FONT_BODY, text_color=COLOR_TEXT, anchor="w").grid(
-                row=row_idx, column=1, sticky="w"
-            )
-            ctk.CTkLabel(parent, text=note or ("Found" if ok else "Not found"),
-                         font=FONT_SMALL, text_color=color, anchor="w").grid(
-                row=row_idx, column=2, padx=(8, 12), sticky="w"
-            )
-
-        _status_row(status_frame, 0, "PostgreSQL", pg)
-        _status_row(status_frame, 1, "pgvector extension", pv)
-
-        # Install buttons
-        btn_row = ctk.CTkFrame(panel, fg_color="transparent")
-        btn_row.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-
-        if not pg.found:
-            SecondaryButton(btn_row, text="Install PostgreSQL 16", width=200,
-                            command=self._install_pg).pack(side="left", padx=(0, 8))
-        elif pg.note:  # installed but not running
-            SecondaryButton(btn_row, text="Start PostgreSQL Service", width=200,
-                            command=self._start_pg).pack(side="left", padx=(0, 8))
-
-        if pg.found and (not pv or not pv.found):
-            SecondaryButton(btn_row, text="Install pgvector", width=160,
-                            command=self._install_pgvector).pack(side="left", padx=(0, 8))
-
-        # Log
-        self._local_log = LogBox(panel, height=80)
-        self._local_log.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-
-        # Credentials
-        SectionLabel(panel, text="PostgreSQL credentials").grid(row=3, column=0, sticky="w", pady=(0, 6))
+        # ── Credentials FIRST — most important, must always be visible ─────────
+        SectionLabel(panel, text="PostgreSQL credentials").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         creds = ctk.CTkFrame(panel, fg_color="transparent")
-        creds.grid(row=4, column=0, sticky="ew")
+        creds.grid(row=1, column=0, sticky="ew")
         creds.columnconfigure(1, weight=1)
         creds.columnconfigure(3, weight=1)
 
-        ctk.CTkLabel(creds, text="Password:", font=FONT_BODY, text_color=COLOR_TEXT).grid(
+        ctk.CTkLabel(creds, text="Password *", font=FONT_BODY, text_color=COLOR_TEXT).grid(
             row=0, column=0, padx=(0, 8), sticky="w"
         )
-        self._pg_password = ctk.CTkEntry(creds, placeholder_text="postgres user password",
-                                         show="*", font=FONT_BODY, height=32)
+        self._pg_password = ctk.CTkEntry(creds, placeholder_text="your postgres user password",
+                                         show="*", font=FONT_BODY, height=36)
         self._pg_password.grid(row=0, column=1, sticky="ew", padx=(0, 16))
 
         ctk.CTkLabel(creds, text="Port:", font=FONT_BODY, text_color=COLOR_TEXT).grid(
             row=0, column=2, padx=(0, 8), sticky="w"
         )
         self._pg_port = ctk.CTkEntry(creds, placeholder_text="5432", font=FONT_BODY,
-                                     height=32, width=80)
+                                     height=36, width=80)
         self._pg_port.insert(0, "5432")
         self._pg_port.grid(row=0, column=3, sticky="w")
 
-        # Database names — let users choose to avoid collisions with existing installs
-        SectionLabel(panel, text="Database names").grid(row=5, column=0, sticky="w", pady=(12, 4))
+        MutedLabel(
+            panel,
+            text="Enter the password for your PostgreSQL 'postgres' user. This was set when PostgreSQL was installed.",
+        ).grid(row=2, column=0, sticky="w", pady=(4, 12))
+
+        # ── Database names ────────────────────────────────────────────────────
+        SectionLabel(panel, text="Database names").grid(row=3, column=0, sticky="w", pady=(0, 4))
 
         db_names = ctk.CTkFrame(panel, fg_color="transparent")
-        db_names.grid(row=6, column=0, sticky="ew")
+        db_names.grid(row=4, column=0, sticky="ew")
         db_names.columnconfigure(1, weight=1)
         db_names.columnconfigure(3, weight=1)
 
@@ -296,7 +255,54 @@ class DatabaseScreen(ctk.CTkFrame):
         MutedLabel(
             panel,
             text="Change these if you already have another agent installed — each install needs its own database names.",
-        ).grid(row=7, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=5, column=0, sticky="w", pady=(4, 12))
+
+        # ── PostgreSQL status ─────────────────────────────────────────────────
+        pg = detect_postgres()
+        pv = detect_pgvector(pg.path) if pg.found else None
+
+        status_frame = ctk.CTkFrame(panel, fg_color=COLOR_CARD, corner_radius=6)
+        status_frame.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+        status_frame.columnconfigure(1, weight=1)
+
+        def _status_row(parent, row_idx, label, result):
+            ok = result.found if result else False
+            note = result.note if result else "Not checked"
+            color = COLOR_GREEN if ok else (COLOR_YELLOW if result and result.note and result.found else COLOR_RED)
+            icon = "✓" if ok else ("⚠" if result and result.note and result.found else "✗")
+            ctk.CTkLabel(parent, text=icon, font=FONT_BODY, text_color=color, width=28).grid(
+                row=row_idx, column=0, padx=(12, 4), pady=6
+            )
+            ctk.CTkLabel(parent, text=label, font=FONT_BODY, text_color=COLOR_TEXT, anchor="w").grid(
+                row=row_idx, column=1, sticky="w"
+            )
+            ctk.CTkLabel(parent, text=note or ("Found" if ok else "Not found"),
+                         font=FONT_SMALL, text_color=color, anchor="w").grid(
+                row=row_idx, column=2, padx=(8, 12), sticky="w"
+            )
+
+        _status_row(status_frame, 0, "PostgreSQL", pg)
+        _status_row(status_frame, 1, "pgvector extension", pv)
+
+        # Install buttons (only shown if something is missing)
+        btn_row = ctk.CTkFrame(panel, fg_color="transparent")
+        btn_row.grid(row=7, column=0, sticky="ew", pady=(0, 8))
+
+        if not pg.found:
+            SecondaryButton(btn_row, text="Install PostgreSQL 16", width=200,
+                            command=self._install_pg).pack(side="left", padx=(0, 8))
+        elif pg.note:  # installed but not running
+            SecondaryButton(btn_row, text="Start PostgreSQL Service", width=200,
+                            command=self._start_pg).pack(side="left", padx=(0, 8))
+
+        if pg.found and (not pv or not pv.found):
+            SecondaryButton(btn_row, text="Install pgvector", width=160,
+                            command=self._install_pgvector).pack(side="left", padx=(0, 8))
+
+        # Log — hidden until there is output
+        self._local_log = LogBox(panel, height=80)
+        self._local_log.grid(row=8, column=0, sticky="ew", pady=(0, 4))
+        self._local_log.grid_remove()
 
         return panel
 
@@ -315,6 +321,7 @@ class DatabaseScreen(ctk.CTkFrame):
 
     def _run_local_task(self, gen) -> None:
         def run():
+            self.after(0, lambda: self._local_log.grid())  # show log when task starts
             for msg, progress in gen:
                 self.after(0, lambda m=msg: self._local_log.append(m))
         threading.Thread(target=run, daemon=True).start()
