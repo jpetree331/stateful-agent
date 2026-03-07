@@ -1,7 +1,7 @@
 """
 Backfill journal_entries from the agent's local markdown files.
 
-Scans these folders under the writing directory:
+Scans these folders under the agent's writing directory:
   - reflections/   (wonders, reflections, research, heartbeats)
   - Journal/       (heartbeats, wonders)
   - research/      (research files)
@@ -31,8 +31,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
 EST = ZoneInfo("America/New_York")
 
-# Default root folder — where the agent writes files. Override with --dir or JOURNAL_WRITING_DIR env.
-DEFAULT_WRITING_DIR = os.environ.get("JOURNAL_WRITING_DIR", r"C:\path\to\writing\folder")
+# Default root folder — where the agent writes files
+DEFAULT_ROWAN_DIR = r"C:\Users\user\Documents\Ai Research\the agent"
 
 # Subfolders to scan (relative to root)
 SCAN_SUBDIRS = ["reflections", "Journal", "research"]
@@ -111,13 +111,13 @@ def _get_local_conn():
     return psycopg.connect(url, row_factory=dict_row)
 
 
-def backfill(writing_dir: str, dry_run: bool = False) -> None:
+def backfill(rowan_dir: str, dry_run: bool = False) -> None:
     print(f"{'[DRY RUN] ' if dry_run else ''}Backfilling journal from local markdown files...")
-    print(f"  Root: {writing_dir}\n")
+    print(f"  Root: {rowan_dir}\n")
 
-    root = Path(writing_dir)
+    root = Path(rowan_dir)
     if not root.exists():
-        raise SystemExit(f"Directory not found: {writing_dir}")
+        raise SystemExit(f"Directory not found: {rowan_dir}")
 
     # Ensure schema
     if not dry_run:
@@ -205,7 +205,7 @@ def backfill(writing_dir: str, dry_run: bool = False) -> None:
                         INSERT INTO journal_entries
                             (entry_date, entry_type, title, content, word_count,
                              source, metadata, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, 'agent', %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, 'rowan', %s, %s, %s)
                         """,
                         (
                             edate, entry_type, title, content, wc,
@@ -232,12 +232,12 @@ def backfill(writing_dir: str, dry_run: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Backfill journal from local .md files")
+    parser = argparse.ArgumentParser(description="Backfill journal from the agent's local .md files")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     parser.add_argument(
         "--dir",
-        default=DEFAULT_WRITING_DIR,
-        help=f"Root folder to scan (default: {DEFAULT_WRITING_DIR})",
+        default=DEFAULT_ROWAN_DIR,
+        help=f"Root folder to scan (default: {DEFAULT_ROWAN_DIR})",
     )
     args = parser.parse_args()
-    backfill(writing_dir=args.dir, dry_run=args.dry_run)
+    backfill(rowan_dir=args.dir, dry_run=args.dry_run)

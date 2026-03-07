@@ -220,9 +220,19 @@ def upload_file(data: bytes, filename: str, tags: list[str] | None = None) -> di
         conn.close()
 
 
-def search(query: str, max_chunks: int = 5) -> list[dict]:
+def search(
+    query: str,
+    max_chunks: int = 5,
+    filename_filter: str | None = None,
+    tags: list[str] | None = None,
+) -> list[dict]:
     """
     Semantic search over knowledge chunks. Returns chunks with file_id, filename, content.
+
+    Optional filters applied BEFORE semantic ranking:
+      filename_filter: case-insensitive substring match on filename
+      tags: list of tag strings — file must have ALL tags (AND logic)
+
     Increments search_count for each file that had a match.
     """
     conn = _get_connection()
@@ -231,17 +241,50 @@ def search(query: str, max_chunks: int = 5) -> list[dict]:
         embeddings = _get_embedding_model()
         qvec = embeddings.embed_query(query)
 
+        # Build optional file_id filter
+        file_id_filter = None
+        if filename_filter or tags:
+            with conn.cursor() as cur:
+                conditions = []
+                params: list = []
+                if filename_filter:
+                    conditions.append("filename ILIKE %s")
+                    params.append(f"%{filename_filter}%")
+                if tags:
+                    for tag in tags:
+                        conditions.append("%s = ANY(COALESCE(tags, '{}'))")
+                        params.append(tag)
+                where = " AND ".join(conditions)
+                cur.execute(f"SELECT id FROM knowledge_files WHERE {where}", params)
+                rows_f = cur.fetchall()
+            file_id_filter = [r[0] for r in rows_f]
+            if not file_id_filter:
+                return []  # Filter matched no files
+
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.id, c.file_id, c.chunk_index, c.content, f.filename
-                FROM knowledge_chunks c
-                JOIN knowledge_files f ON f.id = c.file_id
-                ORDER BY c.embedding <=> %s
-                LIMIT %s
-                """,
-                (qvec, max_chunks),
-            )
+            if file_id_filter:
+                cur.execute(
+                    """
+                    SELECT c.id, c.file_id, c.chunk_index, c.content, f.filename
+                    FROM knowledge_chunks c
+                    JOIN knowledge_files f ON f.id = c.file_id
+                    WHERE c.file_id = ANY(%s)
+                    ORDER BY c.embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (file_id_filter, qvec, max_chunks),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT c.id, c.file_id, c.chunk_index, c.content, f.filename
+                    FROM knowledge_chunks c
+                    JOIN knowledge_files f ON f.id = c.file_id
+                    ORDER BY c.embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (qvec, max_chunks),
+                )
             rows = cur.fetchall()
 
         if not rows:

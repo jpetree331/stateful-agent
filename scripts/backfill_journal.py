@@ -6,7 +6,7 @@ Scans the `messages` table for:
   - Cron job assistant responses   (metadata->>'role_display' = 'cron')
   - Daily summaries                (daily_summaries table, if it exists)
 
-Inserts them into journal_entries in local Postgres (agent-data).
+Inserts them into journal_entries in local Postgres (rowan-data).
 Already-existing entries (same created_at timestamp) are skipped via
 a dedup check, so this script is safe to run multiple times.
 

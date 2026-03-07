@@ -1,8 +1,8 @@
 """
 LangChain tools for the journal: save and read entries.
 
-- save_journal_entry: The agent saves full wonder/reflection/research content to the journal.
-- read_journal: The agent reads journal entries (its own writings, summaries, user notes).
+- save_journal_entry: the agent saves full wonder/reflection/research content to the journal.
+- read_journal: the agent reads journal entries (his own writings, summaries, user notes).
 """
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def save_journal_entry(
                             """
                             INSERT INTO journal_entries
                                 (entry_date, entry_type, title, content, word_count, source, created_at, updated_at)
-                            VALUES (%s, %s, %s, %s, %s, 'agent', %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, 'rowan', %s, %s)
                             RETURNING id
                             """,
                             (edate, entry_type, title or "Daily Summary", content.strip(),
@@ -166,7 +166,7 @@ def save_journal_entry(
                         """
                         INSERT INTO journal_entries
                             (entry_date, entry_type, title, content, word_count, source, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, 'agent', %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, 'rowan', %s, %s)
                         RETURNING id
                         """,
                         (edate, entry_type, title or entry_type.title(), content.strip(),

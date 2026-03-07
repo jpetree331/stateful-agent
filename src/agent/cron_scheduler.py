@@ -190,7 +190,7 @@ def _run_cron_job_sync(job: dict) -> None:
     # If this is a summary-type cron job, also save to the daily_summaries context table.
     # This bridges the gap where the agent writes the summary as its response text but
     # doesn't explicitly call the daily_summary_write tool — or where journal.py saves
-    # to local Postgres (agent-data) but Railway's daily_summaries table is never updated.
+    # to local Postgres (rowan-data) but Railway's daily_summaries table is never updated.
     # Only auto-saves if the agent didn't already call daily_summary_write for today.
     try:
         job_name_lower = (job.get("name") or "").lower()

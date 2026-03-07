@@ -1,5 +1,5 @@
 """
-FastAPI server for the agent dashboard.
+FastAPI server for the the agent dashboard.
 
 Local dev: Run API + Vite dev server (npm run dev in dashboard/). Open http://localhost:5173.
 Public (ngrok): Build dashboard (npm run build), run API, then ngrok http 8000. One URL serves both.
@@ -43,7 +43,7 @@ logging.basicConfig(
         ),
     ],
 )
-logger = logging.getLogger("agent.api")
+logger = logging.getLogger("rowan.api")
 
 from .core_memory import get_all_blocks, update_block, update_system_instructions
 from .cron_jobs import (

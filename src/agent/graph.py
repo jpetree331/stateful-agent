@@ -52,7 +52,7 @@ from .hindsight import retain_exchange
 from .hindsight_tools import hindsight_recall, hindsight_reflect
 from .journal_tools import read_journal, save_journal_entry
 from .living_logs_tools import LIVING_LOG_TOOLS
-from .knowledge_bank_tools import search_knowledge_bank
+from .knowledge_bank_tools import list_knowledge_bank, read_knowledge_bank_file, search_knowledge_bank
 from .python_repl_tools import python_repl
 from .reminder_tools import list_reminders, set_reminder
 from .rss_tools import rss_add_feed, rss_fetch, rss_list_feeds, rss_remove_feed
@@ -68,15 +68,20 @@ from .windows_tools import create_shortcut, notify
 from .youtube_tools import youtube_search, youtube_transcript
 
 def _is_rate_limit_error(e: Exception) -> bool:
-    """True if this looks like a rate limit or quota-exceeded error (429)."""
+    """True if this looks like a provider error that warrants trying the backup (429 or 503)."""
     msg = str(e).lower()
     if "429" in msg or "rate limit" in msg or "quota" in msg or "usage limit" in msg:
+        return True
+    if "503" in msg or "service unavailable" in msg or "overloaded" in msg:
         return True
     try:
         import openai
         if isinstance(e, getattr(openai, "RateLimitError", type(None))):
             return True
-        if getattr(e, "status_code", None) == 429:
+        if isinstance(e, getattr(openai, "InternalServerError", type(None))):
+            return True
+        status = getattr(e, "status_code", None)
+        if status in (429, 503):
             return True
     except (ImportError, AttributeError):
         pass
@@ -138,7 +143,7 @@ class LLMWithFallback(ChatOpenAI):
             except Exception as e:
                 if _is_rate_limit_error(e) and i < len(self._llms) - 1:
                     last_error = e
-                    logger.warning("Rate limit with provider %d, trying backup...", i + 1)
+                    logger.warning("Provider %d unavailable (%s), trying backup...", i + 1, e)
                     continue
                 raise
         if last_error:
@@ -288,7 +293,9 @@ TOOL_CATEGORIES = [
         archival_query,
     ]),
     ("Knowledge Bank", [
+        list_knowledge_bank,
         search_knowledge_bank,
+        read_knowledge_bank_file,
     ]),
     ("AI Vision", [
         analyze_screenshot,
@@ -444,7 +451,13 @@ Use `conversation_search` to retrieve older exchanges when:
 Separate from conversation history — use `archival_store` for facts you choose to remember (preferences, decisions, key details). Use `archival_query` to search what you've archived. This is your curated long-term fact store, not raw chat.
 
 ## Knowledge Bank (uploaded documents)
-The user can upload PDFs, TXT, DOCX, PPTX, and MD files to a Knowledge Bank. Use `search_knowledge_bank` when they ask about topics that may be in those documents — e.g. "What did the report say about X?" or "Summarize the notes I uploaded." Search returns relevant chunks with source filenames.
+The user uploads PDFs, TXT, DOCX, PPTX, and MD files to the Knowledge Bank.
+
+RULES — follow these exactly:
+1. When the user mentions a document, file, or PDF they uploaded → call `list_knowledge_bank` FIRST to see exact filenames and tags.
+2. Then call `search_knowledge_bank` with `filename_filter` set to the document name (or part of it) and/or `tags` set to the relevant tags. Do NOT rely on semantic search alone — always use filters when you know the filename or tags.
+3. If `search_knowledge_bank` returns nothing → call `list_knowledge_bank` (no args) to see all files, then retry with the correct filename_filter.
+4. Never tell the user a document "doesn't exist" without first calling `list_knowledge_bank` to verify.
 
 ## Hindsight (episodic memory)
 

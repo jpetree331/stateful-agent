@@ -102,7 +102,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [error, setError] = useState(null)
-  const [status, setStatus] = useState(null) // e.g. "Analyzing screenshot..." or "Waiting for Agent..."
+  const [status, setStatus] = useState(null) // e.g. "Analyzing screenshot..." or "Waiting for the agent..."
 
   // Overlay controls
   const [opacity, setOpacity] = useState(0.92)
@@ -157,7 +157,7 @@ export default function App() {
   const loadHistory = useCallback(async () => {
     try {
       setLoadError(null)
-      const res = await fetch(`${API_BASE}/messages?thread_id=${THREAD_ID}&limit=100`)
+      const res = await fetch(`${API_BASE}/messages?thread_id=${THREAD_ID}&limit=200`)
       if (!res.ok) {
         const text = await res.text()
         console.warn('[Overlay] messages fetch failed:', res.status, text.slice(0, 200))

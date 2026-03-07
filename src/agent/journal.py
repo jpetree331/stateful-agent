@@ -1,7 +1,7 @@
 """
 Journal: unified daily log of the agent's outputs and user notes.
 
-Stores in local PostgreSQL (agent-data, same DB as Knowledge Bank).
+Stores in local PostgreSQL (rowan-data, same DB as Knowledge Bank).
 Tables: journal_entries
 
 Entry types:
