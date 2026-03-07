@@ -353,8 +353,13 @@ def create_local_database(
         env=env,
         creationflags=_NO_WINDOW,
     )
-    if rc.returncode != 0 and "already exists" not in rc.stderr:
-        yield f"WARNING: {rc.stderr.strip()}", 0.3
+    stderr = rc.stderr.strip()
+    if rc.returncode != 0 and "already exists" not in stderr:
+        # FATAL means authentication failed or server unreachable — hard error
+        if "FATAL" in stderr or "authentication failed" in stderr.lower() or "could not connect" in stderr.lower():
+            yield f"ERROR: {stderr}", 0.3
+            return
+        yield f"WARNING: {stderr}", 0.3
 
     yield f"Enabling pgvector extension in '{db_name}'...", 0.5
 
@@ -366,11 +371,27 @@ def create_local_database(
         creationflags=_NO_WINDOW,
     )
     if rc2.returncode != 0:
-        yield f"WARNING: Could not enable pgvector: {rc2.stderr.strip()}", 0.8
+        stderr2 = rc2.stderr.strip()
+        if "FATAL" in stderr2 or "authentication failed" in stderr2.lower():
+            yield f"ERROR: {stderr2}", 0.8
+            return
+        yield f"WARNING: Could not enable pgvector: {stderr2}", 0.8
     else:
         yield "pgvector extension enabled.", 0.9
 
-    yield f"Database '{db_name}' ready.", 1.0
+    # Verify the connection actually works using psql
+    yield f"Verifying connection to '{db_name}'...", 0.95
+    rc3 = subprocess.run(
+        [str(psql), "-U", pg_user, "-p", str(pg_port), "-d", db_name, "-c", "SELECT 1;"],
+        capture_output=True,
+        text=True,
+        env=env,
+        creationflags=_NO_WINDOW,
+    )
+    if rc3.returncode != 0:
+        yield f"ERROR: Could not connect to '{db_name}' after creation: {rc3.stderr.strip()}", 1.0
+    else:
+        yield f"Database '{db_name}' ready and verified.", 1.0
 
 
 # ── Agent Python environment ──────────────────────────────────────────────────
@@ -517,7 +538,11 @@ def npm_install(project_root: str) -> Generator[tuple[str, float], None, None]:
     yield "Dashboard npm packages installed.", 1.0
 
 
-def run_db_migration(project_root: str, venv_python: Optional[str] = None) -> Generator[tuple[str, float], None, None]:
+def run_db_migration(
+    project_root: str,
+    venv_python: Optional[str] = None,
+    database_url: Optional[str] = None,
+) -> Generator[tuple[str, float], None, None]:
     """Run the living logs migration script."""
     if venv_python is None:
         venv_python = str(Path(project_root) / ".venv" / "Scripts" / "python.exe")
@@ -527,9 +552,32 @@ def run_db_migration(project_root: str, venv_python: Optional[str] = None) -> Ge
         yield "Migration script not found, skipping.", 1.0
         return
 
+    # Pass DATABASE_URL explicitly so the script doesn't fall back to a default
+    env = os.environ.copy()
+    if database_url:
+        env["DATABASE_URL"] = database_url
+
     yield "Running database migration (migrate_living_logs)...", 0.1
-    for line, is_err in _run_stream([venv_python, str(migrate_script)], timeout=60):
-        if line.strip():
-            yield line, 0.5
+    try:
+        proc = subprocess.Popen(
+            [venv_python, str(migrate_script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            cwd=str(project_root),
+            creationflags=_NO_WINDOW,
+        )
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line.strip():
+                yield line, 0.5
+        proc.wait(timeout=60)
+        if proc.returncode != 0:
+            yield f"ERROR: Migration exited with code {proc.returncode}", 1.0
+            return
+    except Exception as e:
+        yield f"ERROR: Migration failed: {e}", 1.0
+        return
 
     yield "Database migration complete.", 1.0

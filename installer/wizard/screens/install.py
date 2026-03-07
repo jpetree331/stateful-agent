@@ -241,7 +241,13 @@ class InstallScreen(ctk.CTkFrame):
             self._log_line("Skipping migration — local database setup did not complete successfully.")
             self._set_step_done("migrate", ok=True)
         else:
-            for msg, progress in run_db_migration(project, venv_python):
+            # Build the DATABASE_URL from what we just created so migration uses the right DB
+            _db_url = (
+                f"postgresql://postgres:"
+                f"{self._db_config.pg_password}@localhost:"
+                f"{self._db_config.pg_port or 5432}/{self._db_config.db_name}"
+            )
+            for msg, progress in run_db_migration(project, venv_python, database_url=_db_url):
                 self._log_line(msg)
                 self._set_step("migrate", progress, "")
                 if "ERROR" in msg.upper():
