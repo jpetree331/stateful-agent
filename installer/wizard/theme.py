@@ -67,6 +67,7 @@ class BodyLabel(ctk.CTkLabel):
         kwargs.setdefault("font", FONT_BODY)
         kwargs.setdefault("text_color", COLOR_TEXT)
         kwargs.setdefault("anchor", "w")
+        kwargs.setdefault("justify", "left")
         kwargs.setdefault("wraplength", 700)
         super().__init__(master, text=text, **kwargs)
 
@@ -76,6 +77,7 @@ class MutedLabel(ctk.CTkLabel):
         kwargs.setdefault("font", FONT_SMALL)
         kwargs.setdefault("text_color", COLOR_MUTED)
         kwargs.setdefault("anchor", "w")
+        kwargs.setdefault("justify", "left")
         kwargs.setdefault("wraplength", 700)
         super().__init__(master, text=text, **kwargs)
 
