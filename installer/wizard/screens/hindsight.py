@@ -160,18 +160,37 @@ class HindsightScreen(ctk.CTkFrame):
             row=0, column=1, sticky="w", padx=(0, 12)
         )
 
-        # ── LLM config for Hindsight container ────────────────────────────────
-        SectionLabel(body, text="Hindsight LLM configuration").grid(
-            row=2, column=0, sticky="w", pady=(0, 4)
+        # ── Bank ID (always shown when Hindsight is chosen) ───────────────────
+        bank_row = ctk.CTkFrame(body, fg_color="transparent")
+        bank_row.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        bank_row.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(bank_row, text="Memory Bank ID", font=FONT_SMALL,
+                     text_color=COLOR_MUTED, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=(0, 12)
+        )
+        self._bank_id = ctk.CTkEntry(bank_row, placeholder_text="stateful-agent",
+                                     font=FONT_BODY, height=32)
+        self._bank_id.insert(0, "stateful-agent")
+        self._bank_id.grid(row=0, column=1, sticky="ew")
+
+        # ── LLM config — only needed when creating a new container ────────────
+        # Hidden when Hindsight is already running or has an existing container.
+        self._llm_config_frame = ctk.CTkFrame(body, fg_color="transparent")
+        self._llm_config_frame.grid(row=3, column=0, sticky="ew")
+        self._llm_config_frame.columnconfigure(0, weight=1)
+
+        SectionLabel(self._llm_config_frame, text="Hindsight LLM configuration").grid(
+            row=0, column=0, sticky="w", pady=(0, 4)
         )
         MutedLabel(
-            body,
+            self._llm_config_frame,
             text="Hindsight needs an LLM to process memories. Use the same provider as your agent, "
                  "or a cheaper model like gpt-4o-mini.",
-        ).grid(row=3, column=0, sticky="w", pady=(0, 8))
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
-        form = ctk.CTkFrame(body, fg_color="transparent")
-        form.grid(row=4, column=0, sticky="ew")
+        form = ctk.CTkFrame(self._llm_config_frame, fg_color="transparent")
+        form.grid(row=2, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
         form.columnconfigure(3, weight=1)
 
@@ -186,8 +205,9 @@ class HindsightScreen(ctk.CTkFrame):
         self._llm_base_url = _field(form, 0, 0, 1, "Base URL", "https://api.openai.com/v1")
         self._llm_model    = _field(form, 0, 2, 3, "Model", "gpt-4o-mini")
         self._llm_api_key  = _field(form, 1, 0, 1, "API Key", "sk-...", show="*")
-        self._bank_id      = _field(form, 1, 2, 3, "Memory Bank ID", "stateful-agent")
-        self._bank_id.insert(0, "stateful-agent")
+
+        # Hidden until detection confirms a new container is needed
+        self._llm_config_frame.grid_remove()
 
         # ── Warning banner (shown only for full download) ──────────────────
         self._warn_frame = ctk.CTkFrame(body, fg_color="#2a1a00", corner_radius=6)
@@ -278,6 +298,15 @@ class HindsightScreen(ctk.CTkFrame):
 
     def _apply_hindsight_state(self, state: HindsightState, msg: str) -> None:
         """Update the status card and action button based on detected state."""
+        # LLM config is only needed when creating a brand-new container.
+        # RUNNING and CONTAINER_STOPPED both have an existing container with LLM already configured.
+        needs_llm_config = state in (HindsightState.NOT_INSTALLED, HindsightState.IMAGE_ONLY)
+
+        if needs_llm_config:
+            self._llm_config_frame.grid()
+        else:
+            self._llm_config_frame.grid_remove()
+
         if state == HindsightState.RUNNING:
             self._status_icon_lbl.configure(text="✓", text_color=COLOR_GREEN)
             self._status_text_lbl.configure(
