@@ -18,7 +18,7 @@ from ..screens.hindsight import HindsightConfig
 from ..theme import (
     FONT_HEADING, FONT_BODY, FONT_SMALL,
     COLOR_BG, COLOR_CARD, COLOR_BLUE, COLOR_GREEN, COLOR_RED, COLOR_YELLOW,
-    COLOR_TEXT, COLOR_MUTED,
+    COLOR_TEXT, COLOR_MUTED, COLOR_ACCENT,
     BodyLabel, MutedLabel, PrimaryButton, SecondaryButton, SectionLabel,
     ScrollableFrame,
 )
