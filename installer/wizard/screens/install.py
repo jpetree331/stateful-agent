@@ -214,16 +214,30 @@ class InstallScreen(ctk.CTkFrame):
         self._set_step_done("db", ok=db_ok)
 
         # ── Step 6: DB migration ──────────────────────────────────────────────
-        # Only run if pip succeeded (venv python exists) and a DATABASE_URL is set.
-        # Migration connects to the DB — no point running if packages aren't installed.
+        # Creates Living Logs tables (tension_log, loose_threads, etc.) in the
+        # agent's database. Safe to skip if the DB isn't reachable yet — the
+        # agent's db.py calls setup_schema() on first run anyway.
+        # Only attempt if: pip succeeded, venv python exists, and DATABASE_URL
+        # is actually reachable (i.e. local DB was just set up, or Railway URL provided).
         self._set_step("migrate", 0.1, "Running migrations…")
         migrate_ok = True
         venv_python = str(Path(project) / ".venv" / "Scripts" / "python.exe")
+
+        # Determine whether we have a database URL to connect to
+        db_url = (self._env_config.values or {}).get("DATABASE_URL", "").strip()
+        has_db_url = bool(db_url and db_url != "postgresql://postgres:password@localhost:5432/stateful-agent")
+
         if not pip_ok:
             self._log_line("Skipping migration — Python packages did not install successfully.")
             self._set_step_done("migrate", ok=True)
         elif not Path(venv_python).exists():
             self._log_line("Skipping migration — venv Python not found.")
+            self._set_step_done("migrate", ok=True)
+        elif not has_db_url:
+            self._log_line("Skipping migration — no DATABASE_URL configured. Run manually after setting up your database.")
+            self._set_step_done("migrate", ok=True)
+        elif not db_ok:
+            self._log_line("Skipping migration — database setup did not complete successfully.")
             self._set_step_done("migrate", ok=True)
         else:
             for msg, progress in run_db_migration(project, venv_python):
@@ -266,7 +280,13 @@ class InstallScreen(ctk.CTkFrame):
         self.after(0, lambda: self._log.append(msg))
 
     def _launch_agent(self) -> None:
-        """Launch the agent using start_all.py --no-chat (starts services + opens browser)."""
+        """Launch the agent using start_all.py --no-chat (starts services + opens browser).
+
+        start_all.py automatically finds a free port starting at 5173, so multiple
+        agents can run side-by-side without overwriting each other's dashboard.
+        The chosen port is printed to stdout and captured here so we can show the
+        correct URL in the log.
+        """
         project = self._install_path
         venv_python = Path(project) / ".venv" / "Scripts" / "python.exe"
         start_script = Path(project) / "scripts" / "start_all.py"
@@ -281,15 +301,36 @@ class InstallScreen(ctk.CTkFrame):
             return
 
         self._log_line("Launching agent services and opening dashboard in browser…")
+        threading.Thread(target=self._run_launch, args=(str(venv_python), str(start_script), project), daemon=True).start()
+
+    def _run_launch(self, venv_python: str, start_script: str, project: str) -> None:
+        """Run start_all.py in a thread, capture its port output, update the UI."""
+        import re
         try:
-            subprocess.Popen(
-                [str(venv_python), str(start_script), "--no-chat"],
+            proc = subprocess.Popen(
+                [venv_python, start_script, "--no-chat"],
                 cwd=project,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=_NO_WINDOW,
             )
-            self._log_line("Agent started! Dashboard opening at http://localhost:5173")
-            self.after(0, lambda: self._status_label.configure(
-                text="Agent is starting! Dashboard will open in your browser.",
+
+            dashboard_url = "http://localhost:5173"  # fallback
+            for line in proc.stdout:
+                line = line.rstrip()
+                if not line:
+                    continue
+                self._log_line(line)
+                # start_all.py prints "  Local:   http://localhost:PORT"
+                m = re.search(r"Local:\s+(http://localhost:\d+)", line)
+                if m:
+                    dashboard_url = m.group(1)
+
+            proc.wait(timeout=30)
+            self._log_line(f"Agent started! Dashboard: {dashboard_url}")
+            self.after(0, lambda url=dashboard_url: self._status_label.configure(
+                text=f"Agent is starting! Dashboard: {url}",
                 text_color=COLOR_GREEN,
             ))
         except Exception as e:

@@ -33,11 +33,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable  # Inherits the venv Python from whichever Python runs this
 LOG_DIR = PROJECT_ROOT / "logs" / "services"
 
-BG_SERVICES = [
-    ("api", f'"{PYTHON}" -m src.agent.api', PROJECT_ROOT),
-    ("dashboard", "npm run dev", PROJECT_ROOT / "dashboard"),
-    ("heartbeat", f'"{PYTHON}" -m scripts.run_heartbeat_scheduler', PROJECT_ROOT),
-]
+_DEFAULT_DASHBOARD_PORT = 5173
+_API_PORT = 8000
+
+
+def _find_free_port(start: int, end: int = 65535) -> int:
+    """Return the first TCP port in [start, end] that is not in use."""
+    for port in range(start, end + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found between {start} and {end}")
 
 
 # ── Kill helpers ──────────────────────────────────────────────────────────────
@@ -96,11 +106,11 @@ def _kill_cmdline(fragment: str, label: str) -> None:
         print(f"  Killed {label} (PID {', '.join(pids)})")
 
 
-def kill_old_services() -> None:
+def kill_old_services(dashboard_port: int) -> None:
     """Stop any services left over from a previous run."""
     print("Stopping any previously running services...")
-    _kill_port(8000, "API")
-    _kill_port(5173, "Dashboard")
+    _kill_port(_API_PORT, "API")
+    _kill_port(dashboard_port, "Dashboard")
     _kill_cmdline("run_heartbeat_scheduler", "Heartbeat")
     time.sleep(1)  # Give OS a moment to release ports
 
@@ -108,9 +118,14 @@ def kill_old_services() -> None:
 # ── Start helpers ─────────────────────────────────────────────────────────────
 
 
-def start_background() -> None:
+def start_background(dashboard_port: int) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    for name, cmd, cwd in BG_SERVICES:
+    bg_services = [
+        ("api",       f'"{PYTHON}" -m src.agent.api',                           PROJECT_ROOT),
+        ("dashboard", f"npm run dev -- --port {dashboard_port}",                PROJECT_ROOT / "dashboard"),
+        ("heartbeat", f'"{PYTHON}" -m scripts.run_heartbeat_scheduler',         PROJECT_ROOT),
+    ]
+    for name, cmd, cwd in bg_services:
         log = LOG_DIR / f"{name}.log"
         subprocess.Popen(
             cmd,
@@ -147,28 +162,37 @@ def main():
     )
     args = parser.parse_args()
 
-    kill_old_services()
+    # Find a free dashboard port starting at 5173 so multiple agents can run
+    # side-by-side without overwriting each other's dashboard.
+    dashboard_port = _find_free_port(_DEFAULT_DASHBOARD_PORT)
+    if dashboard_port != _DEFAULT_DASHBOARD_PORT:
+        print(f"Port {_DEFAULT_DASHBOARD_PORT} is in use — using port {dashboard_port} for this agent's dashboard.")
+
+    kill_old_services(dashboard_port)
 
     print("Starting background services...")
-    start_background()
+    start_background(dashboard_port)
 
     lan_ip = _get_lan_ip()
+    dashboard_local   = f"http://localhost:{dashboard_port}"
+    dashboard_network = f"http://{lan_ip}:{dashboard_port}" if lan_ip != "unknown" else None
+
     print("Waiting for servers to start (API can take ~10s to load agent)...")
     time.sleep(5)
-    webbrowser.open("http://localhost:5173")
+    webbrowser.open(dashboard_local)
 
     if args.no_chat:
         print("Done.")
-        print(f"  Local:   http://localhost:5173")
-        if lan_ip != "unknown":
-            print(f"  Network: http://{lan_ip}:5173  (share this with devices on the same WiFi)")
+        print(f"  Local:   {dashboard_local}")
+        if dashboard_network:
+            print(f"  Network: {dashboard_network}  (share this with devices on the same WiFi)")
         print("Logs: logs/services/")
         return
 
     print(f"\nDashboard:")
-    print(f"  Local:   http://localhost:5173")
-    if lan_ip != "unknown":
-        print(f"  Network: http://{lan_ip}:5173  ← share this with other devices on the same WiFi/LAN")
+    print(f"  Local:   {dashboard_local}")
+    if dashboard_network:
+        print(f"  Network: {dashboard_network}  ← share this with other devices on the same WiFi/LAN")
     print("API, Dashboard, and Heartbeat running in the background.\n")
     print("─" * 60)
     print("Agent chat starting below. Type 'quit' or Ctrl+C to exit.")
