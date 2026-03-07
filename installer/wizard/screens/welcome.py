@@ -100,7 +100,7 @@ class WelcomeScreen(ctk.CTkFrame):
         path_frame.grid(row=12, column=0, sticky="ew")
         path_frame.columnconfigure(0, weight=1)
 
-        # Default to the folder containing this installer EXE (i.e. the project root)
+        # Default to the detected project root; empty string means not found — user must browse.
         default_path = self._default_install_path()
         self._path_var = tk.StringVar(value=default_path)
 
@@ -153,9 +153,15 @@ class WelcomeScreen(ctk.CTkFrame):
     def _default_install_path(self) -> str:
         """
         Return the project root — the folder containing requirements.txt and src/.
-        When running as a frozen EXE, start from the EXE's directory and walk up/down
-        to find the real project root. This handles GitHub zip extractions that
-        produce double-nested folders like stateful-agent-master/stateful-agent-master/.
+
+        Search strategy (frozen EXE):
+          1. EXE's own directory (normal: user placed AgentInstaller.exe in the project root)
+          2. One level down (GitHub zip double-nesting: outer/inner/)
+          3. Walk up to 3 parent levels (user ran EXE from a subfolder)
+          4. Return empty string — forces the user to browse, rather than silently
+             picking the wrong folder.
+
+        Running as a plain script: walk up from installer/wizard/screens/.
         """
         import sys
 
@@ -165,20 +171,29 @@ class WelcomeScreen(ctk.CTkFrame):
         if getattr(sys, "frozen", False):
             exe_dir = Path(sys.executable).parent
 
-            # Check the EXE's own directory first (normal case)
+            # 1. EXE's own directory (most common correct case)
             if _looks_like_project_root(exe_dir):
                 return str(exe_dir)
 
-            # Check one level down (GitHub zip double-nesting: outer/inner/)
+            # 2. One level down (GitHub zip double-nesting: outer/inner/)
             try:
-                for child in exe_dir.iterdir():
+                for child in sorted(exe_dir.iterdir()):
                     if child.is_dir() and _looks_like_project_root(child):
                         return str(child)
             except Exception:
                 pass
 
-            # Fall back to EXE directory
-            return str(exe_dir)
+            # 3. Walk up the tree (EXE placed inside a subfolder of the project)
+            for parent in exe_dir.parents:
+                if _looks_like_project_root(parent):
+                    return str(parent)
+                # Don't walk past the drive root or more than 3 levels up
+                if len(parent.parts) <= len(exe_dir.parts) - 3:
+                    break
+
+            # 4. Nothing found — return empty so the user must browse manually.
+            #    This is safer than silently picking the wrong folder.
+            return ""
 
         # Running as script — go up from installer/wizard/screens/ to project root
         return str(Path(__file__).resolve().parents[3])
@@ -195,9 +210,25 @@ class WelcomeScreen(ctk.CTkFrame):
     def _update_disk_check(self) -> None:
         path = self._path_var.get().strip()
         if not path:
+            self._disk_label.configure(
+                text="Please click Browse and select the folder where you extracted the agent (it contains requirements.txt and a src/ folder).",
+                text_color=COLOR_RED,
+            )
+            self._next_btn.configure(state="disabled")
             return
+
+        # Validate that the selected folder actually looks like the agent project
+        p = Path(path)
+        if not ((p / "requirements.txt").exists() and (p / "src").exists()):
+            self._disk_label.configure(
+                text="This folder doesn't look like the agent project. Browse to the folder that contains requirements.txt and src/.",
+                text_color=COLOR_RED,
+            )
+            self._next_btn.configure(state="disabled")
+            return
+
         try:
-            usage = shutil.disk_usage(path if Path(path).exists() else Path(path).anchor)
+            usage = shutil.disk_usage(path if p.exists() else p.anchor)
             free_gb = usage.free / (1024 ** 3)
             if free_gb >= 10:
                 self._disk_label.configure(
@@ -213,6 +244,7 @@ class WelcomeScreen(ctk.CTkFrame):
                 self._next_btn.configure(state="normal")  # warn but don't block
         except Exception:
             self._disk_label.configure(text="Could not check disk space.", text_color=COLOR_MUTED)
+            self._next_btn.configure(state="normal")
 
     def _on_continue(self) -> None:
         path = self._path_var.get().strip()
