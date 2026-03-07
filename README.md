@@ -75,6 +75,29 @@ The agent can analyze your screen, answer questions in context, and send updates
 
 ## Quick Start
 
+### Option A — One-Click Installer (recommended for new users)
+
+A graphical installer wizard handles everything: Python, Node.js, Git, Docker, PostgreSQL, pgvector, pip dependencies, npm dependencies, and `.env` configuration — all in one guided flow.
+
+**If an `AgentInstaller.exe` is included in the release:**
+
+Double-click `AgentInstaller.exe`. No terminal required.
+
+**If you have Python 3.11+ already and want to run the installer without building the EXE:**
+
+```powershell
+pip install customtkinter "psycopg[binary]"
+python installer/main.py
+```
+
+> **Note on Hindsight / Docker:** The first time Docker downloads the Hindsight episodic memory image it can take **30+ minutes** depending on your internet speed. The installer shows a live progress bar — your agent is not broken, it just takes a while.
+
+See [`installer/README.md`](./installer/README.md) for instructions on building the EXE yourself.
+
+---
+
+### Option B — Manual Setup
+
 ```bash
 # 1. Create venv and install
 python -m venv .venv
@@ -406,6 +429,11 @@ The core distinction: most projects treat memory as a retrieval problem. This pr
 │   └── import_*.py
 ├── dashboard/                       # React + Vite (Chat, Notes, Journal, Knowledge Bank)
 ├── electron-overlay/                # Always-on-top gaming overlay
+├── installer/                       # One-click installer wizard (CustomTkinter GUI)
+│   ├── main.py                      # Entry point — run directly or build to EXE
+│   ├── build.py                     # PyInstaller script → dist/AgentInstaller.exe
+│   ├── requirements.txt             # Installer-only dependencies
+│   └── wizard/                      # Screens: welcome, dependencies, database, hindsight, env, install
 ├── data/                            # Runtime state (SQLite, RSS offsets)
 └── .env.example
 ```

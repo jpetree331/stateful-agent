@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import Picker from '@emoji-mart/react'
 import emojiData from '@emoji-mart/data'
@@ -1437,11 +1437,12 @@ function ChatTab() {
     userJustSentRef.current = false
   }, [messages])
 
-  // Reset textarea height when input is cleared
-  useEffect(() => {
-    if (!input && inputRef.current) {
-      inputRef.current.style.height = 'auto'
-    }
+  // Auto-resize textarea height after each input change (runs after DOM commit, no sync reflow on keypress)
+  useLayoutEffect(() => {
+    const ta = inputRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
   }, [input])
 
   // Close emoji picker when clicking outside
@@ -1752,12 +1753,7 @@ function ChatTab() {
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => {
-                setInput(e.target.value)
-                const ta = e.target
-                ta.style.height = 'auto'
-                ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
-              }}
+              onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type a message..."
               disabled={loading}
