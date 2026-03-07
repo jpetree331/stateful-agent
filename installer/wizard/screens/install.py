@@ -209,23 +209,24 @@ class InstallScreen(ctk.CTkFrame):
                             db_ok = False
             else:
                 self._log_line("WARNING: PostgreSQL not found for local DB setup. Skipping.")
+        elif self._db_config.mode == "local" and not self._db_config.pg_password:
+            self._log_line("WARNING: No PostgreSQL password provided — skipping local DB creation.")
+            self._log_line("Go back to the Database screen and enter your postgres password.")
+            db_ok = False
         else:
-            self._log_line("Using Railway database — no local DB setup needed.")
+            self._log_line("Using cloud/Railway database — no local DB setup needed.")
         self._set_step_done("db", ok=db_ok)
 
         # ── Step 6: DB migration ──────────────────────────────────────────────
-        # Creates Living Logs tables (tension_log, loose_threads, etc.) in the
-        # agent's database. Safe to skip if the DB isn't reachable yet — the
-        # agent's db.py calls setup_schema() on first run anyway.
-        # Only attempt if: pip succeeded, venv python exists, and DATABASE_URL
-        # is actually reachable (i.e. local DB was just set up, or Railway URL provided).
+        # Creates Living Logs tables (tension_log, loose_threads, etc.).
+        # Only run for LOCAL mode where we just set up the DB and know it's
+        # reachable with the credentials we have. For Railway/cloud, the agent's
+        # db.py calls setup_schema() on first startup, which handles this.
         self._set_step("migrate", 0.1, "Running migrations…")
         migrate_ok = True
         venv_python = str(Path(project) / ".venv" / "Scripts" / "python.exe")
 
-        # Determine whether we have a database URL to connect to
-        db_url = (self._env_config.values or {}).get("DATABASE_URL", "").strip()
-        has_db_url = bool(db_url and db_url != "postgresql://postgres:password@localhost:5432/stateful-agent")
+        is_local_mode = (self._db_config.mode == "local")
 
         if not pip_ok:
             self._log_line("Skipping migration — Python packages did not install successfully.")
@@ -233,11 +234,11 @@ class InstallScreen(ctk.CTkFrame):
         elif not Path(venv_python).exists():
             self._log_line("Skipping migration — venv Python not found.")
             self._set_step_done("migrate", ok=True)
-        elif not has_db_url:
-            self._log_line("Skipping migration — no DATABASE_URL configured. Run manually after setting up your database.")
+        elif not is_local_mode:
+            self._log_line("Skipping migration — using cloud database. The agent will run migrations automatically on first start.")
             self._set_step_done("migrate", ok=True)
         elif not db_ok:
-            self._log_line("Skipping migration — database setup did not complete successfully.")
+            self._log_line("Skipping migration — local database setup did not complete successfully.")
             self._set_step_done("migrate", ok=True)
         else:
             for msg, progress in run_db_migration(project, venv_python):

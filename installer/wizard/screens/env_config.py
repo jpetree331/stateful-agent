@@ -184,10 +184,19 @@ class EnvConfigScreen(ctk.CTkFrame):
 
         # DATABASE_URL (pre-filled from database screen)
         db_url = self._db_config.database_url
+        is_local = self._db_config.mode == "local"
+        db_help = (
+            "Pre-filled from the Database screen. Go back to change it."
+            if is_local else
+            "Your PostgreSQL connection string from Railway or another cloud provider."
+        )
         f = _FormField(form, 0, "DATABASE_URL", "postgresql://...", required=True,
-                       default=db_url,
-                       help_text="Your PostgreSQL connection string. Pre-filled from the previous step.")
+                       default=db_url, help_text=db_help)
         f.set(db_url)
+        if is_local:
+            # Lock the field — password was entered on the Database screen.
+            # Editing it here would break DB creation and migration.
+            f._entry.configure(state="disabled", text_color="#888888")
         self._fields["DATABASE_URL"] = f
 
         # LLM API key

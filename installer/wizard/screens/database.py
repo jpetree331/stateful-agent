@@ -104,6 +104,10 @@ class DatabaseScreen(ctk.CTkFrame):
         SecondaryButton(footer, text="← Back", width=100, command=self._on_back).grid(
             row=0, column=0, sticky="w"
         )
+        self._db_error_label = ctk.CTkLabel(
+            footer, text="", font=FONT_SMALL, text_color=COLOR_RED, anchor="w"
+        )
+        self._db_error_label.grid(row=0, column=1, padx=16, sticky="w")
         self._next_btn = PrimaryButton(
             footer, text="Continue  →", width=160, command=self._on_continue
         )
@@ -346,6 +350,12 @@ class DatabaseScreen(ctk.CTkFrame):
             )
         else:
             password = self._pg_password.get().strip()
+            if not password:
+                self._db_error_label.configure(
+                    text="Please enter your PostgreSQL password. This is required to connect to your local database."
+                )
+                return
+            self._db_error_label.configure(text="")
             try:
                 port = int(self._pg_port.get().strip() or "5432")
             except ValueError:
