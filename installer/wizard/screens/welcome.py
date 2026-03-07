@@ -129,10 +129,10 @@ class WelcomeScreen(ctk.CTkFrame):
         )
         self._disk_label.grid(row=13, column=0, sticky="w", pady=(6, 0))
 
-        self._path_var.trace_add("write", lambda *_: self._update_disk_check())
-        self._update_disk_check()
-
         # ── Footer ────────────────────────────────────────────────────────────
+        # IMPORTANT: footer and _next_btn must be created BEFORE the trace fires
+        # (_update_disk_check references _next_btn, and the trace can fire immediately
+        # when the StringVar is set).
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.grid(row=2, column=0, sticky="ew", padx=32, pady=(0, 24))
         footer.columnconfigure(0, weight=1)
@@ -149,6 +149,10 @@ class WelcomeScreen(ctk.CTkFrame):
             command=self._on_continue,
         )
         self._next_btn.grid(row=0, column=1, sticky="e")
+
+        # Hook up path validation AFTER _next_btn exists
+        self._path_var.trace_add("write", lambda *_: self._update_disk_check())
+        self._update_disk_check()
 
     def _default_install_path(self) -> str:
         """
