@@ -40,7 +40,7 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if __import__("sys").platform == "win32
 @dataclass
 class HindsightConfig:
     enabled: bool
-    bank_id: str = "openclaw-log"
+    bank_id: str = "stateful-agent"
     llm_provider: str = "openai"
     llm_base_url: str = ""
     llm_model: str = ""
@@ -186,8 +186,8 @@ class HindsightScreen(ctk.CTkFrame):
         self._llm_base_url = _field(form, 0, 0, 1, "Base URL", "https://api.openai.com/v1")
         self._llm_model    = _field(form, 0, 2, 3, "Model", "gpt-4o-mini")
         self._llm_api_key  = _field(form, 1, 0, 1, "API Key", "sk-...", show="*")
-        self._bank_id      = _field(form, 1, 2, 3, "Memory Bank ID", "openclaw-log")
-        self._bank_id.insert(0, "openclaw-log")
+        self._bank_id      = _field(form, 1, 2, 3, "Memory Bank ID", "stateful-agent")
+        self._bank_id.insert(0, "stateful-agent")
 
         # ── Warning banner (shown only for full download) ──────────────────
         self._warn_frame = ctk.CTkFrame(body, fg_color="#2a1a00", corner_radius=6)
@@ -511,7 +511,7 @@ class HindsightScreen(ctk.CTkFrame):
 
         config = HindsightConfig(
             enabled=True,
-            bank_id=self._bank_id.get().strip() or "openclaw-log",
+            bank_id=self._bank_id.get().strip() or "stateful-agent",
             llm_provider="openai",
             llm_base_url=self._llm_base_url.get().strip(),
             llm_model=self._llm_model.get().strip(),

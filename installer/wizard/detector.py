@@ -238,48 +238,74 @@ _HINDSIGHT_IMAGE = "ghcr.io/vectorize-io/hindsight:latest"
 _HINDSIGHT_CONTAINER = "hindsight"
 
 
+def _port_open(host: str, port: int, timeout: float = 3.0) -> bool:
+    """Return True if a TCP connection to host:port succeeds."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def detect_hindsight() -> tuple[HindsightState, str]:
     """
     Detect Hindsight state.
     Returns (HindsightState, message) — message is a human-readable status line.
-    """
-    HINDSIGHT_IMAGE = _HINDSIGHT_IMAGE
-    HINDSIGHT_CONTAINER = _HINDSIGHT_CONTAINER
 
+    Detection strategy:
+    1. If port 8888 is already open, Hindsight is running regardless of container name.
+    2. Otherwise check for the Docker image and any container using that image.
+    """
     # Is Docker even available?
     rc_info, _ = _run(["docker", "info"], timeout=8)
     if rc_info != 0:
+        # Docker not running — but check if port 8888 is open anyway (e.g. non-Docker install)
+        if _port_open("localhost", 8888):
+            return HindsightState.RUNNING, "Hindsight API is reachable at localhost:8888"
         return HindsightState.NOT_INSTALLED, "Docker daemon not running — cannot check Hindsight"
+
+    # Fast path: if port 8888 is open, Hindsight is running (regardless of container name)
+    if _port_open("localhost", 8888):
+        return HindsightState.RUNNING, "Hindsight is running and API is reachable at localhost:8888"
 
     # Check if image exists locally
     rc_img, out_img = _run(
-        ["docker", "image", "inspect", HINDSIGHT_IMAGE, "--format", "{{.Id}}"],
+        ["docker", "image", "inspect", _HINDSIGHT_IMAGE, "--format", "{{.Id}}"],
         timeout=10,
     )
     image_present = rc_img == 0 and bool(out_img.strip())
 
-    # Check container state
+    # Check the canonical container name first, then scan all containers for the image
     rc_ctr, out_ctr = _run(
-        ["docker", "inspect", HINDSIGHT_CONTAINER, "--format", "{{.State.Status}}"],
+        ["docker", "inspect", _HINDSIGHT_CONTAINER, "--format", "{{.State.Status}}"],
         timeout=10,
     )
     container_exists = rc_ctr == 0
     container_running = container_exists and out_ctr.strip() == "running"
 
+    # If canonical name not found, scan all containers for any using the Hindsight image
+    if not container_exists and image_present:
+        rc_ps, out_ps = _run(
+            ["docker", "ps", "-a", "--filter", f"ancestor={_HINDSIGHT_IMAGE}",
+             "--format", "{{.Status}}"],
+            timeout=10,
+        )
+        if rc_ps == 0 and out_ps.strip():
+            first_status = out_ps.strip().splitlines()[0].lower()
+            if first_status.startswith("up"):
+                return HindsightState.RUNNING, "Hindsight container is running (API not yet responding on port 8888)"
+            else:
+                return HindsightState.CONTAINER_STOPPED, f"Hindsight container exists but is stopped ({first_status})"
+
     if container_running:
-        # Verify the API actually responds
-        try:
-            import urllib.request
-            urllib.request.urlopen("http://localhost:8888", timeout=4)
-            return HindsightState.RUNNING, "Hindsight container is running and API is reachable"
-        except Exception:
-            return HindsightState.RUNNING, "Hindsight container is running (API not yet responding)"
+        return HindsightState.RUNNING, "Hindsight container is running (API not yet responding on port 8888)"
 
     if container_exists and not container_running:
         return HindsightState.CONTAINER_STOPPED, f"Hindsight container exists but is stopped (status: {out_ctr.strip()})"
 
     if image_present:
-        return HindsightState.IMAGE_ONLY, "Hindsight image is downloaded but container has not been started"
+        return HindsightState.IMAGE_ONLY, "Hindsight image is downloaded but no container has been started"
 
     return HindsightState.NOT_INSTALLED, "Hindsight image not found — needs to be downloaded"
 

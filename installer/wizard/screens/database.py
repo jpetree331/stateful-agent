@@ -50,7 +50,7 @@ class DatabaseScreen(ctk.CTkFrame):
         self._on_next = on_next
         self._on_back = on_back
         self._snapshot = snapshot
-        self._mode = tk.StringVar(value="railway")
+        self._mode = tk.StringVar(value="local")
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -76,14 +76,14 @@ class DatabaseScreen(ctk.CTkFrame):
 
         self._railway_btn = self._mode_card(
             mode_frame, "railway",
-            "Railway (Recommended)",
-            "Use a free cloud database from Railway.\nNo local setup needed.",
+            "Railway (Cloud)",
+            "Use a free cloud database from Railway.\nNo local setup needed. Good for testing.",
             col=0,
         )
         self._local_btn = self._mode_card(
             mode_frame, "local",
-            "Local PostgreSQL",
-            "Use a PostgreSQL database on this PC.\nRequires PostgreSQL to be installed.",
+            "Local PostgreSQL  (Recommended)",
+            "Keep all data on your own PC.\nBest for privacy and long-term personal use.",
             col=1,
         )
 
