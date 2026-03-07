@@ -375,6 +375,51 @@ def create_local_database(
 
 # ── Agent Python environment ──────────────────────────────────────────────────
 
+def _find_system_python() -> Optional[str]:
+    """
+    Find the real system Python 3.11+ executable.
+    When running as a frozen PyInstaller EXE, sys.executable points to the EXE
+    itself — NOT to Python. We must search PATH and common install locations.
+    """
+    # If not frozen, sys.executable is the real Python
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+
+    # Search PATH for python / python3
+    for name in ["python", "python3", "python3.12", "python3.11"]:
+        path = shutil.which(name)
+        if path:
+            rc, out = subprocess.run(
+                [path, "--version"], capture_output=True, text=True,
+                creationflags=_NO_WINDOW,
+            ).returncode, ""
+            try:
+                result = subprocess.run(
+                    [path, "--version"], capture_output=True, text=True,
+                    creationflags=_NO_WINDOW,
+                )
+                ver_match = re.search(r"3\.(\d+)", result.stdout + result.stderr)
+                if ver_match and int(ver_match.group(1)) >= 11:
+                    return path
+            except Exception:
+                continue
+
+    # Check common Windows install locations
+    for base in [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+        Path("C:/Python312"),
+        Path("C:/Python311"),
+    ]:
+        if not base.exists():
+            continue
+        for sub in sorted(base.glob("Python3*/python.exe"), reverse=True):
+            return str(sub)
+        if (base / "python.exe").exists():
+            return str(base / "python.exe")
+
+    return None
+
+
 def create_venv(project_root: str) -> Generator[tuple[str, float], None, None]:
     """Create .venv in the project root."""
     venv_path = Path(project_root) / ".venv"
@@ -384,8 +429,15 @@ def create_venv(project_root: str) -> Generator[tuple[str, float], None, None]:
         yield "Virtual environment already exists, skipping creation.", 0.1
         return
 
+    python = _find_system_python()
+    if not python:
+        yield "ERROR: Python 3.11+ not found on this system. Please install it from https://python.org and re-run the installer.", 1.0
+        return
+
+    yield f"Using Python: {python}", 0.08
+
     rc = subprocess.run(
-        [sys.executable, "-m", "venv", str(venv_path)],
+        [python, "-m", "venv", str(venv_path)],
         capture_output=True,
         text=True,
         creationflags=_NO_WINDOW,
@@ -441,9 +493,10 @@ def npm_install(project_root: str) -> Generator[tuple[str, float], None, None]:
 
     yield "Installing dashboard npm packages...", 0.05
     steps = 0
-    # Run npm install from within the dashboard/ directory
+    # Run npm install from within the dashboard/ directory.
+    # --legacy-peer-deps avoids conflicts from packages with strict peer dep declarations.
     proc = subprocess.Popen(
-        [npm, "install"],
+        [npm, "install", "--legacy-peer-deps"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

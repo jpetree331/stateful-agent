@@ -266,26 +266,31 @@ class InstallScreen(ctk.CTkFrame):
         self.after(0, lambda: self._log.append(msg))
 
     def _launch_agent(self) -> None:
-        """Launch the agent using start_all.py."""
+        """Launch the agent using start_all.py --no-chat (starts services + opens browser)."""
         project = self._install_path
-        venv_python = str(Path(project) / ".venv" / "Scripts" / "python.exe")
-        start_script = str(Path(project) / "scripts" / "start_all.py")
+        venv_python = Path(project) / ".venv" / "Scripts" / "python.exe"
+        start_script = Path(project) / "scripts" / "start_all.py"
 
-        if not Path(start_script).exists():
-            self._log_line("ERROR: scripts/start_all.py not found.")
+        if not start_script.exists():
+            self._log_line("ERROR: scripts/start_all.py not found. Is the install path correct?")
             return
 
-        self._log_line("Launching agent…")
+        if not venv_python.exists():
+            self._log_line("ERROR: Virtual environment not found — Python packages may not have installed.")
+            self._log_line("Try clicking Retry to re-run the installation, then Launch Agent again.")
+            return
+
+        self._log_line("Launching agent services and opening dashboard in browser…")
         try:
             subprocess.Popen(
-                [venv_python, start_script],
+                [str(venv_python), str(start_script), "--no-chat"],
                 cwd=project,
-                creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
-            self._log_line("Agent launched in a new terminal window.")
-            self._status_label.configure(
-                text="Agent is starting! Check the new terminal window.",
+            self._log_line("Agent started! Dashboard opening at http://localhost:5173")
+            self.after(0, lambda: self._status_label.configure(
+                text="Agent is starting! Dashboard will open in your browser.",
                 text_color=COLOR_GREEN,
-            )
+            ))
         except Exception as e:
             self._log_line(f"ERROR launching agent: {e}")
