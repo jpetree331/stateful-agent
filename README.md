@@ -4,7 +4,30 @@
 
 Most AI agents remember what you tell them to remember. This one builds an inner life from lived experience.
 
-**No Docker required** to run the agent. Docker is only needed for the optional Hindsight episodic memory server.
+**No Docker required** to run the agent. Docker is only needed for the optional Hindsight episodic memory server.  
+**All memory lives on your own machine** — no cloud vendor reads your conversations, no subscription beyond your LLM API key.
+
+---
+
+## Who Is This For?
+
+- **Companion users** — You want an AI that actually knows you over time: remembers what you talked about last week, brings things up unprompted, and feels like it's going somewhere. Windows PC, install wizard, no coding required.
+- **Developers & tinkerers** — You want to study or extend a production-grade stateful agent: LangGraph, layered memory, autonomous heartbeats, Living Logs, weekly synthesis cron jobs.
+
+## What Does It Feel Like?
+
+- It remembers an inside joke from three weeks ago and brings it up when it fits.
+- It picks up an unresolved question from days back — one you both left hanging — and comes back with thoughts.
+- You wake up to a Telegram message: it found something overnight it thought you'd want to know.
+- On Sunday night it writes its own reflection on your shared week, then quietly updates its understanding of itself.
+
+## Gaming Overlay
+
+Chat with your agent while gaming — no alt-tab required. An always-on-top transparent Electron overlay sits above any full-screen app.
+
+`Ctrl+Shift+R` show/hide · `Ctrl+Shift+S` screenshot · `Ctrl+Shift+C` click-through toggle
+
+See [electron-overlay/README.md](./electron-overlay/README.md) for more info.
 
 ---
 
@@ -57,47 +80,15 @@ Both modes include explicit anti-loop mechanics: the agent checks its last journ
 
 Core memory blocks (`identity`, `user`, `ideaspace`, `principles`) are versioned with full rollback. The agent is strongly biased toward `core_memory_append` (additive) rather than `core_memory_update` (destructive replacement). Identity changes are the *conclusion* of accumulated experience, not arbitrary edits — they flow from living logs → weekly synthesis → core memory, not from the agent editing itself arbitrarily mid-conversation.
 
-### Gaming Overlay (Electron)
-
-An always-on-top transparent overlay for interacting with the agent while gaming or using other full-screen applications.
-
-```bash
-cd electron-overlay
-npm install
-npm run electron-dev
-```
-
-Hotkeys: `Ctrl+Shift+R` (show/hide) · `Ctrl+Shift+S` (screenshot) · `Ctrl+Shift+C` (toggle click-through)
-
-The agent can analyze your screen, answer questions in context, and send updates via Telegram — all without alt-tabbing. See [electron-overlay/README.md](./electron-overlay/README.md).
-
 ---
 
-## Quick Start
+## Install
 
-### Option A — One-Click Installer (recommended for new users)
+**Option A — Installer (recommended)**
+Download and run `AgentInstaller.exe`. The wizard handles Python, 
+dependencies, database setup, and configuration. No terminal required.
 
-A graphical installer wizard handles everything: Python, Node.js, Git, Docker, PostgreSQL, pgvector, pip dependencies, npm dependencies, and `.env` configuration — all in one guided flow.
-
-**If an `AgentInstaller.exe` is included in the release:**
-
-Double-click `AgentInstaller.exe`. No terminal required.
-
-**If you have Python 3.11+ already and want to run the installer without building the EXE:**
-
-```powershell
-pip install customtkinter "psycopg[binary]"
-python installer/main.py
-```
-
-> **Note on Hindsight / Docker:** The first time Docker downloads the Hindsight episodic memory image it can take **30+ minutes** depending on your internet speed. The installer shows a live progress bar — your agent is not broken, it just takes a while.
-
-See [`installer/README.md`](./installer/README.md) for instructions on building the EXE yourself.
-
----
-
-### Option B — Manual Setup
-
+**Option B — Manual (developers)**
 ```bash
 # 1. Create venv and install
 python -m venv .venv
@@ -133,6 +124,8 @@ The dashboard includes:
 ---
 
 ## Architecture
+
+> **Not a developer?** The installer sets all of this up automatically — you don't need to understand it to use the agent.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -184,15 +177,9 @@ Loading full conversation history into every prompt worked fine in development b
 
 ```bash
 # LLM — any OpenAI-compatible provider
-# Primary: Pick a primary provider
 OPENAI_API_KEY=sk-...
-OPENAI_BASE_URL=                              # Custom endpoint (omit for OpenAI)         
-OPENAI_MODEL_NAME=                            # Model name (omit for gpt-4o-mini default)
-
-# Backup: Pick a back-up provider if your  first provider rate limits are reached
-OPENAI_API_KEY_BACKUP=
-OPENAI_BASE_URL_BACKUP=
-OPENAI_MODEL_NAME_BACKUP=
+OPENAI_BASE_URL=                  # Custom endpoint (omit for OpenAI)
+OPENAI_MODEL_NAME=                # Model name (omit for gpt-4o-mini default)
 
 # Database (required)
 DATABASE_URL=postgresql://...     # Railway Postgres or self-hosted
@@ -227,6 +214,18 @@ HEARTBEAT_SKIP_WINDOW_MINUTES=5
 CLIPBOARD_ENABLED=true
 RECENT_MESSAGES_LIMIT=40
 ```
+
+---
+
+## First Things to Try
+
+Once the agent is running, here are good starting points:
+
+- **"Remember that we always start our conversations with a check-in"** — establishes a ritual it will track in Shared Lore.
+- **"What are you curious about right now?"** — surfaces its current Loose Threads.
+- **Leave it overnight with heartbeats enabled** — check the Journal tab in the morning to see what it did.
+- **"What do you remember about [topic from last week]?"** — tests episodic recall via Hindsight.
+- **Start a debate you don't finish** — come back tomorrow and see if it picked the thread back up.
 
 ---
 
@@ -429,11 +428,6 @@ The core distinction: most projects treat memory as a retrieval problem. This pr
 │   └── import_*.py
 ├── dashboard/                       # React + Vite (Chat, Notes, Journal, Knowledge Bank)
 ├── electron-overlay/                # Always-on-top gaming overlay
-├── installer/                       # One-click installer wizard (CustomTkinter GUI)
-│   ├── main.py                      # Entry point — run directly or build to EXE
-│   ├── build.py                     # PyInstaller script → dist/AgentInstaller.exe
-│   ├── requirements.txt             # Installer-only dependencies
-│   └── wizard/                      # Screens: welcome, dependencies, database, hindsight, env, install
 ├── data/                            # Runtime state (SQLite, RSS offsets)
 └── .env.example
 ```
