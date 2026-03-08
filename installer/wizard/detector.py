@@ -360,4 +360,6 @@ def scan_system(install_path: str = "C:/") -> SystemSnapshot:
     snap.postgres = detect_postgres()
     if snap.postgres.found:
         snap.pgvector = detect_pgvector(snap.postgres.path)
+    else:
+        snap.pgvector = DetectResult(found=False, note="Install PostgreSQL first")
     return snap

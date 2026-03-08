@@ -11,7 +11,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from ..detector import DetectResult, SystemSnapshot, scan_system
-from ..installer import install_python, install_node, install_git, install_docker
+from ..installer import install_python, install_node, install_git, install_docker, install_postgres, install_pgvector, start_postgres_service
 from ..theme import (
     FONT_HEADING, FONT_BODY, FONT_SMALL,
     COLOR_BG, COLOR_CARD, COLOR_BLUE, COLOR_GREEN, COLOR_YELLOW, COLOR_RED,
@@ -22,18 +22,22 @@ from ..theme import (
 
 
 _DEPS = [
-    ("python",  "Python 3.11+",   "Required to run the agent"),
-    ("node",    "Node.js 18+",    "Required for the web dashboard"),
-    ("npm",     "npm",            "Installed with Node.js"),
-    ("git",     "Git",            "Required to clone/update the agent"),
-    ("docker",  "Docker Desktop", "Required for Hindsight memory (optional)"),
+    ("python",   "Python 3.11+",    "Required to run the agent"),
+    ("node",     "Node.js 18+",     "Required for the web dashboard"),
+    ("npm",      "npm",             "Installed with Node.js"),
+    ("git",      "Git",             "Required to clone/update the agent"),
+    ("docker",   "Docker Desktop",  "Required for Hindsight memory (optional)"),
+    ("postgres", "PostgreSQL 16",   "Required — stores all conversations and memory"),
+    ("pgvector", "pgvector",        "Required — enables AI memory search in PostgreSQL"),
 ]
 
 _INSTALLERS = {
-    "python": install_python,
-    "node":   install_node,
-    "git":    install_git,
-    "docker": install_docker,
+    "python":   install_python,
+    "node":     install_node,
+    "git":      install_git,
+    "docker":   install_docker,
+    "postgres": install_postgres,
+    "pgvector": install_pgvector,
 }
 
 
@@ -194,23 +198,41 @@ class DependenciesScreen(ctk.CTkFrame):
 
     def _apply_snapshot(self, snap: SystemSnapshot) -> None:
         attr_map = {
-            "python": snap.python,
-            "node":   snap.node,
-            "npm":    snap.npm,
-            "git":    snap.git,
-            "docker": snap.docker,
+            "python":   snap.python,
+            "node":     snap.node,
+            "npm":      snap.npm,
+            "git":      snap.git,
+            "docker":   snap.docker,
+            "postgres": snap.postgres,
+            "pgvector": snap.pgvector,
         }
         for dep_id, result in attr_map.items():
             if dep_id in self._rows:
                 self._rows[dep_id].set_result(result)
 
-        # Determine if we can proceed (python, node, git required; docker optional)
-        required_ok = snap.python.found and snap.node.found and snap.git.found
+        # postgres not running is a warning (found=True, note set) — still ok to continue
+        # pgvector not found is also a warning — installer will try to add it
+        postgres_ok = snap.postgres.found  # found=True even if not running
+        pgvector_ok = snap.pgvector.found
+
+        # Show a note if postgres is found but not running
+        if snap.postgres.found and snap.postgres.note and "not running" in snap.postgres.note:
+            self._log.grid()
+            self._log.append("PostgreSQL is installed but not running. The installer will start it automatically.")
+            self._log.append("If it fails to start, open Services (services.msc) and start the postgresql service manually.")
+
+        required_ok = snap.python.found and snap.node.found and snap.git.found and postgres_ok
         if required_ok:
-            self._status_label.configure(
-                text="Required dependencies found. You may continue.",
-                text_color=COLOR_GREEN,
-            )
+            if not pgvector_ok:
+                self._status_label.configure(
+                    text="Ready to continue. pgvector will be installed during setup.",
+                    text_color=COLOR_YELLOW,
+                )
+            else:
+                self._status_label.configure(
+                    text="All required dependencies found. You may continue.",
+                    text_color=COLOR_GREEN,
+                )
             self._next_btn.configure(state="normal")
         else:
             missing = []
@@ -220,6 +242,8 @@ class DependenciesScreen(ctk.CTkFrame):
                 missing.append("Node.js 18+")
             if not snap.git.found:
                 missing.append("Git")
+            if not postgres_ok:
+                missing.append("PostgreSQL")
             self._status_label.configure(
                 text=f"Missing required: {', '.join(missing)}. Install them to continue.",
                 text_color=COLOR_RED,
@@ -252,8 +276,18 @@ class DependenciesScreen(ctk.CTkFrame):
     def _install_finished(self, dep_id: str, ok: bool) -> None:
         row = self._rows[dep_id]
         row.set_install_done(ok)
-        # Re-scan to pick up newly installed tools
-        threading.Thread(target=self._scan, daemon=True).start()
+        # After postgres installs, also try to start the service
+        if dep_id == "postgres" and ok:
+            self._log.append("Attempting to start PostgreSQL service...")
+            def start_pg():
+                for msg, _ in start_postgres_service():
+                    self.after(0, lambda m=msg: self._log.append(m))
+                # Re-scan after starting
+                threading.Thread(target=self._scan, daemon=True).start()
+            threading.Thread(target=start_pg, daemon=True).start()
+        else:
+            # Re-scan to pick up newly installed tools
+            threading.Thread(target=self._scan, daemon=True).start()
 
     def _on_continue(self) -> None:
         if self._snapshot:
