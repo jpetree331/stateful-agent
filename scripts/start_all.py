@@ -34,7 +34,7 @@ PYTHON = sys.executable  # Inherits the venv Python from whichever Python runs t
 LOG_DIR = PROJECT_ROOT / "logs" / "services"
 
 _DEFAULT_DASHBOARD_PORT = 5173
-_API_PORT = 8000
+_DEFAULT_API_PORT = 8000
 
 
 def _find_free_port(start: int, end: int = 65535) -> int:
@@ -106,11 +106,41 @@ def _kill_cmdline(fragment: str, label: str) -> None:
         print(f"  Killed {label} (PID {', '.join(pids)})")
 
 
-def kill_old_services(dashboard_port: int) -> None:
-    """Stop any services left over from a previous run."""
+def _is_our_process(port: int) -> bool:
+    """Return True if the process on this port was started from this project root."""
+    result = subprocess.run(
+        "netstat -ano",
+        shell=True, capture_output=True, text=True,
+    )
+    pids = set()
+    for line in result.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+            pid = parts[4]
+            if pid.isdigit() and int(pid) > 4:
+                pids.add(pid)
+    for pid in pids:
+        # Check if the process command line contains our project root path
+        r = subprocess.run(
+            ["wmic", "process", "where", f"processid={pid}", "get", "commandline", "/format:value"],
+            capture_output=True, text=True,
+        )
+        if str(PROJECT_ROOT).lower() in r.stdout.lower():
+            return True
+    return False
+
+
+def kill_old_services(api_port: int, dashboard_port: int) -> None:
+    """Stop services from a PREVIOUS run of THIS agent only.
+
+    We only kill a port if the process on it was launched from this project root,
+    so we never accidentally kill another agent's services.
+    """
     print("Stopping any previously running services...")
-    _kill_port(_API_PORT, "API")
-    _kill_port(dashboard_port, "Dashboard")
+    if _is_our_process(api_port):
+        _kill_port(api_port, "API")
+    if _is_our_process(dashboard_port):
+        _kill_port(dashboard_port, "Dashboard")
     _kill_cmdline("run_heartbeat_scheduler", "Heartbeat")
     time.sleep(1)  # Give OS a moment to release ports
 
@@ -118,10 +148,10 @@ def kill_old_services(dashboard_port: int) -> None:
 # ── Start helpers ─────────────────────────────────────────────────────────────
 
 
-def start_background(dashboard_port: int) -> None:
+def start_background(api_port: int, dashboard_port: int) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     bg_services = [
-        ("api",       f'"{PYTHON}" -m src.agent.api',                           PROJECT_ROOT),
+        ("api",       f'"{PYTHON}" -m src.agent.api --port {api_port}',         PROJECT_ROOT),
         ("dashboard", f"npm run dev -- --port {dashboard_port}",                PROJECT_ROOT / "dashboard"),
         ("heartbeat", f'"{PYTHON}" -m scripts.run_heartbeat_scheduler',         PROJECT_ROOT),
     ]
@@ -162,16 +192,29 @@ def main():
     )
     args = parser.parse_args()
 
-    # Find a free dashboard port starting at 5173 so multiple agents can run
-    # side-by-side without overwriting each other's dashboard.
+    # Find free ports starting at defaults so multiple agents can run side-by-side.
+    # We check if the port belongs to THIS agent first; if so we'll kill+restart it.
+    # If it belongs to a different agent, we skip to the next free port.
+    api_port = _find_free_port(_DEFAULT_API_PORT)
+    if api_port != _DEFAULT_API_PORT:
+        print(f"Port {_DEFAULT_API_PORT} is in use — using port {api_port} for this agent's API.")
+
     dashboard_port = _find_free_port(_DEFAULT_DASHBOARD_PORT)
     if dashboard_port != _DEFAULT_DASHBOARD_PORT:
         print(f"Port {_DEFAULT_DASHBOARD_PORT} is in use — using port {dashboard_port} for this agent's dashboard.")
 
-    kill_old_services(dashboard_port)
+    kill_old_services(api_port, dashboard_port)
+
+    # Re-check ports after killing old services (they may now be free at the default)
+    api_port = _find_free_port(_DEFAULT_API_PORT)
+    dashboard_port = _find_free_port(_DEFAULT_DASHBOARD_PORT)
+
+    # Write the API port to a file so the dashboard Vite proxy can pick it up
+    api_port_file = PROJECT_ROOT / ".api_port"
+    api_port_file.write_text(str(api_port))
 
     print("Starting background services...")
-    start_background(dashboard_port)
+    start_background(api_port, dashboard_port)
 
     lan_ip = _get_lan_ip()
     dashboard_local   = f"http://localhost:{dashboard_port}"

@@ -216,6 +216,8 @@ class InstallScreen(ctk.CTkFrame):
         else:
             self._log_line("Using cloud/Railway database — no local DB setup needed.")
         self._set_step_done("db", ok=db_ok)
+        if not db_ok:
+            success = False
 
         # ── Step 6: DB migration ──────────────────────────────────────────────
         # Creates Living Logs tables (tension_log, loose_threads, etc.).
@@ -253,6 +255,8 @@ class InstallScreen(ctk.CTkFrame):
                 if "ERROR" in msg.upper():
                     migrate_ok = False
             self._set_step_done("migrate", ok=migrate_ok)
+            if not migrate_ok:
+                success = False
 
         # ── Done ──────────────────────────────────────────────────────────────
         self._running = False

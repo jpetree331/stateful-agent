@@ -5,7 +5,6 @@ import fs from 'fs'
 import path from 'path'
 
 // Read DASHBOARD_PASSWORD from .env so the Vite proxy can authenticate with the API.
-// Without this, the API's HTTP Basic Auth middleware rejects proxy requests with 401.
 function readEnvPassword() {
   try {
     const envPath = path.resolve(__dirname, '../.env')
@@ -17,7 +16,21 @@ function readEnvPassword() {
   }
 }
 
+// Read the API port written by start_all.py so the proxy targets the right port.
+// Falls back to 8000 if the file doesn't exist (e.g. manual dev startup).
+function readApiPort() {
+  try {
+    const portFile = path.resolve(__dirname, '../.api_port')
+    const content = fs.readFileSync(portFile, 'utf-8').trim()
+    const port = parseInt(content, 10)
+    return isNaN(port) ? 8000 : port
+  } catch {
+    return 8000
+  }
+}
+
 const dashboardPassword = readEnvPassword()
+const apiPort = readApiPort()
 const proxyHeaders = dashboardPassword
   ? { Authorization: 'Basic ' + Buffer.from(':' + dashboardPassword).toString('base64') }
   : {}
@@ -28,11 +41,10 @@ export default defineConfig({
   server: {
     // host: true binds to 0.0.0.0 so the dashboard is reachable from other
     // devices on the same network via the host machine's LAN IP address.
-    // e.g. http://192.168.1.42:5173 from another PC or phone on the same WiFi.
     host: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: `http://localhost:${apiPort}`,
         changeOrigin: true,
         headers: proxyHeaders,
       },

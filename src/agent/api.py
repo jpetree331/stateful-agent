@@ -1652,10 +1652,15 @@ else:
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
 
-    # Railway (and most cloud platforms) inject a PORT env var.
-    port = int(os.environ.get("PORT", 8000))
+    _parser = argparse.ArgumentParser(description="Stateful Agent API server")
+    _parser.add_argument("--port", type=int, default=None, help="Port to listen on")
+    _args, _ = _parser.parse_known_args()
+
+    # Priority: --port flag > PORT env var > default 8000
+    port = _args.port or int(os.environ.get("PORT", 8000))
     uvicorn.run(
         "src.agent.api:app",
         host="0.0.0.0",
