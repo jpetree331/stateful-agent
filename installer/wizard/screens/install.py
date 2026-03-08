@@ -80,6 +80,7 @@ class InstallScreen(ctk.CTkFrame):
             ("npm",     "Install dashboard packages (npm)"),
             ("db",      "Set up database"),
             ("migrate", "Run database migrations"),
+            ("memory",  "Seed initial memory & heartbeat config"),
         ]
         for i, (step_id, label) in enumerate(step_defs):
             row = ProgressRow(steps_frame, label)
@@ -258,11 +259,111 @@ class InstallScreen(ctk.CTkFrame):
             if not migrate_ok:
                 success = False
 
+        # ── Step 7: Seed memory blocks + heartbeat config ─────────────────────
+        self._set_step("memory", 0.1, "Seeding…")
+        memory_ok = True
+        try:
+            import json as _json
+            from datetime import date as _date
+
+            # Write heartbeat_config.json with user's chosen interval
+            interval_str = self._env_config.values.get("HEARTBEAT_INTERVAL_MINUTES", "60")
+            try:
+                interval_val = int(interval_str)
+            except ValueError:
+                interval_val = 60
+            heartbeat_enabled = self._env_config.values.get("HEARTBEAT_ENABLED", "true") == "true"
+            hb_config = {
+                "wonder_start": 22,
+                "wonder_end": 3,
+                "work_start": 3,
+                "work_end": 6,
+                "day_interval": interval_val,
+                "night_interval": max(interval_val, 60),
+                "enabled": heartbeat_enabled,
+            }
+            data_dir = Path(project) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "heartbeat_config.json").write_text(
+                _json.dumps(hb_config, indent=2), encoding="utf-8"
+            )
+            status = "enabled" if heartbeat_enabled else "disabled"
+            self._log_line(f"Heartbeat config written ({status}, every {interval_val} min).")
+            self._set_step("memory", 0.3, "")
+
+            # Seed core memory blocks from examples/memory/ if DB is ready
+            if db_ok and pip_ok and Path(venv_python).exists():
+                examples_dir = Path(project) / "examples" / "memory"
+                block_files = {
+                    "identity":   "IDENTITY.txt",
+                    "user":       "USER.txt",
+                    "ideaspace":  "IDEASPACE.txt",
+                    "principles": "PRINCIPLES.txt",
+                }
+                sysinstruct_file = examples_dir / "SYSINSTRUCT_EXAMPLE.txt"
+
+                seed_script = _build_memory_seed_script(
+                    block_files={k: str(examples_dir / v) for k, v in block_files.items()},
+                    sysinstruct_path=str(sysinstruct_file) if sysinstruct_file.exists() else None,
+                    today=str(_date.today()),
+                )
+                seed_path = Path(project) / "data" / "_installer_seed_memory.py"
+                seed_path.write_text(seed_script, encoding="utf-8")
+
+                _db_url = (
+                    f"postgresql://postgres:{self._db_config.pg_password}@localhost:"
+                    f"{self._db_config.pg_port or 5432}/{self._db_config.db_name}"
+                    if self._db_config.mode == "local"
+                    else self._db_config.database_url
+                )
+                import os as _os
+                env = _os.environ.copy()
+                env["DATABASE_URL"] = _db_url
+
+                proc = subprocess.run(
+                    [venv_python, str(seed_path)],
+                    capture_output=True, text=True, env=env,
+                    cwd=project, creationflags=_NO_WINDOW,
+                )
+                if proc.returncode == 0:
+                    self._log_line("Core memory blocks seeded from examples/memory/.")
+                    self._log_line("System instructions loaded from SYSINSTRUCT_EXAMPLE.txt.")
+                else:
+                    self._log_line(f"WARNING: Memory seed returned code {proc.returncode}: {proc.stderr.strip()[:200]}")
+                seed_path.unlink(missing_ok=True)
+            else:
+                self._log_line("Skipping memory seed — DB not ready (will use blank defaults).")
+
+            self._set_step("memory", 1.0, "")
+        except Exception as e:
+            self._log_line(f"WARNING: Memory/heartbeat setup error: {e}")
+            memory_ok = False
+        self._set_step_done("memory", ok=memory_ok)
+
         # ── Done ──────────────────────────────────────────────────────────────
         self._running = False
         self._done = True
 
         if success:
+            self._log_line("")
+            self._log_line("=" * 56)
+            self._log_line("NEXT STEPS — please read before launching:")
+            self._log_line("")
+            self._log_line("1. SYSTEM INSTRUCTIONS are pre-loaded from")
+            self._log_line("   examples/memory/SYSINSTRUCT_EXAMPLE.txt.")
+            self._log_line("   Review and personalise them in the dashboard")
+            self._log_line("   Core tab once the agent is running.")
+            self._log_line("")
+            self._log_line("2. SET UP 3 CRON JOBS in the dashboard Cron tab")
+            self._log_line("   for memory maintenance (copy prompts from")
+            self._log_line("   examples/CRON_JOBS_EXAMPLE.md):")
+            self._log_line("   - daily_summary     55 23 * * *  (11:55 PM daily)")
+            self._log_line("   - weekly_synthesis_phase1  0 1 * * 0  (Sun 1 AM)")
+            self._log_line("   - weekly_synthesis_phase2  0 2 * * 0  (Sun 2 AM)")
+            self._log_line("")
+            self._log_line("   Without these, the agent cannot maintain its")
+            self._log_line("   long-term memory or do weekly self-reflection.")
+            self._log_line("=" * 56)
             self.after(0, lambda: (
                 self._status_label.configure(
                     text="Installation complete! Click 'Launch Agent' to start.",
@@ -346,3 +447,41 @@ class InstallScreen(ctk.CTkFrame):
             ))
         except Exception as e:
             self._log_line(f"ERROR launching agent: {e}")
+
+
+def _build_memory_seed_script(
+    block_files: dict[str, str],
+    sysinstruct_path: str | None,
+    today: str,
+) -> str:
+    """Return a Python script string that seeds core memory blocks and system instructions."""
+    lines = [
+        "import sys, os",
+        "from pathlib import Path",
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+        "from dotenv import load_dotenv",
+        "load_dotenv(Path(__file__).resolve().parents[1] / '.env', override=True)",
+        "from src.agent.core_memory import update_block, update_system_instructions",
+        "",
+    ]
+    for block_type, path in block_files.items():
+        lines += [
+            f"_path = Path({repr(path)})",
+            f"if _path.exists():",
+            f"    _content = _path.read_text(encoding='utf-8').replace('{{date}}', {repr(today)})",
+            f"    ok, msg = update_block({repr(block_type)}, _content)",
+            f"    print(f'  {block_type}: {{msg}}')",
+            f"else:",
+            f"    print(f'  {block_type}: example file not found, skipping')",
+            "",
+        ]
+    if sysinstruct_path:
+        lines += [
+            f"_si_path = Path({repr(sysinstruct_path)})",
+            "if _si_path.exists():",
+            "    update_system_instructions(_si_path.read_text(encoding='utf-8'))",
+            "    print('  system_instructions: loaded from SYSINSTRUCT_EXAMPLE.txt')",
+            "else:",
+            "    print('  system_instructions: example file not found, skipping')",
+        ]
+    return "\n".join(lines)

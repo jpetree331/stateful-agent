@@ -252,6 +252,28 @@ class EnvConfigScreen(ctk.CTkFrame):
             help_text="The agent's time awareness timezone. Use IANA format (e.g. America/Chicago, Europe/London).",
         )
 
+        # Heartbeat
+        ctk.CTkLabel(form, text="Heartbeat (autonomous background thinking)", font=FONT_BODY,
+                     text_color=COLOR_BLUE, anchor="w").grid(
+            row=12, column=0, columnspan=2, sticky="w", pady=(16, 4)
+        )
+        heartbeat_row = ctk.CTkFrame(form, fg_color="transparent")
+        heartbeat_row.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        heartbeat_row.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(heartbeat_row, text="Enable heartbeat:", font=FONT_BODY,
+                     text_color=COLOR_TEXT).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self._heartbeat_var = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(heartbeat_row, text="", variable=self._heartbeat_var,
+                      onvalue=True, offvalue=False).grid(row=0, column=1, sticky="w")
+
+        self._fields["HEARTBEAT_INTERVAL_MINUTES"] = _FormField(
+            form, 5, "Heartbeat interval (minutes)",
+            "60",
+            default="60",
+            help_text="How often the agent runs an autonomous thinking cycle. 60 = once per hour. Minimum recommended: 30.",
+        )
+
     def _build_advanced_section(self, parent) -> None:
         # Toggle button
         toggle_row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -410,6 +432,9 @@ class EnvConfigScreen(ctk.CTkFrame):
             val = fld.get()
             if val:
                 values[key] = val
+
+        # Heartbeat toggle (switch widget, not a _FormField)
+        values["HEARTBEAT_ENABLED"] = "true" if self._heartbeat_var.get() else "false"
 
         # Inject pre-collected values
         values["DATABASE_URL"] = self._db_config.database_url

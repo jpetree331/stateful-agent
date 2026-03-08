@@ -1,0 +1,4 @@
+PRINCIPLES — Operational heuristics learned through experience.
+Updated via weekly synthesis from tension_log and tool friction entries.
+
+[No entries yet — block active as of {date}]
