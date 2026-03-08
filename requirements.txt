@@ -26,6 +26,7 @@ APScheduler>=3.10
 # API server for dashboard (local testing)
 fastapi>=0.115
 uvicorn>=0.32
+python-multipart>=0.0.9
 
 # HTTP client for web search tools (Brave, Exa, Tavily, weather)
 httpx>=0.27
