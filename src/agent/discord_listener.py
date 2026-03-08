@@ -1,12 +1,12 @@
 """
 Discord Gateway listener — connects via discord.py WebSocket so the agent appears
-online and responds immediately when the user sends a message.
+online and responds immediately to messages in allowed channels.
 
 How it works:
   - Uses discord.py's Gateway (persistent WebSocket) instead of REST polling.
   - on_ready: sets bot status to Online and logs the connected username.
-  - on_message: fires immediately on any message; filters to the configured
-    channel, skips bot messages, shows typing indicator, then calls chat().
+  - on_message: fires on messages in allowed channels; filters by @mention when
+    DISCORD_REQUIRE_MENTION is set; shows typing indicator, then calls chat().
   - PNG/JPEG attachments are fetched and passed to the agent for vision.
   - PDF, TXT, PPTX, DOCX, MD attachments are fetched and their text is extracted
     and appended to the message content.
@@ -14,10 +14,15 @@ How it works:
 
 Required .env variables:
   DISCORD_BOT_TOKEN   — bot token from Discord Developer Portal
-  DISCORD_CHANNEL_ID  — DM channel ID to listen on
+  DISCORD_CHANNEL_ID  — single channel ID (fallback if ALLOWED_CHANNEL_IDS not set)
 
 Optional:
-  DISCORD_POLL_INTERVAL — kept for backwards compat but ignored (Gateway is instant)
+  DISCORD_ALLOWED_CHANNEL_IDS — comma-separated channel IDs to listen in (server channels,
+                                DMs, threads — only explicitly listed IDs are used)
+  DISCORD_PRIMARY_USER_ID    — your Discord user ID; when you speak in a group, the agent
+                                sees "[YourName (you)]" so it knows it's you
+  DISCORD_REQUIRE_MENTION    — if true, only respond when @mentioned (prevents bot loops
+                                and limits replies in busy channels; applies to humans and bots)
 
 Bot permissions needed in Discord Developer Portal → Bot:
   - MESSAGE CONTENT INTENT (required to read message content)
@@ -41,26 +46,48 @@ _client = None
 _task: asyncio.Task | None = None
 
 
+def _parse_allowed_channels() -> set[int]:
+    """Parse DISCORD_ALLOWED_CHANNEL_IDS or fallback to DISCORD_CHANNEL_ID."""
+    allowed_str = os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "").strip()
+    if not allowed_str:
+        single = os.environ.get("DISCORD_CHANNEL_ID", "").strip()
+        if single:
+            try:
+                return {int(single)}
+            except ValueError:
+                pass
+        return set()
+    ids = set()
+    for part in allowed_str.split(","):
+        part = part.strip()
+        if part:
+            try:
+                ids.add(int(part))
+            except ValueError:
+                logger.warning(f"Invalid channel ID in DISCORD_ALLOWED_CHANNEL_IDS: {part}")
+
+    return ids
+
+
 def start_discord_listener(agent) -> asyncio.Task | None:
     """Start the Discord Gateway listener as a background asyncio task.
     Returns None (and logs a message) if env vars aren't configured."""
     global _client, _task
 
-    channel_id_str = os.environ.get("DISCORD_CHANNEL_ID", "").strip()
+    allowed_channels = _parse_allowed_channels()
     token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
 
-    if not channel_id_str or not token:
+    if not allowed_channels or not token:
         logger.info(
             "Discord listener not started "
-            "(DISCORD_CHANNEL_ID or DISCORD_BOT_TOKEN missing from .env)"
+            "(DISCORD_ALLOWED_CHANNEL_IDS or DISCORD_CHANNEL_ID and DISCORD_BOT_TOKEN required)"
         )
         return None
 
-    try:
-        target_channel_id = int(channel_id_str)
-    except ValueError:
-        logger.error(f"DISCORD_CHANNEL_ID '{channel_id_str}' is not a valid integer")
-        return None
+    primary_user_id_str = os.environ.get("DISCORD_PRIMARY_USER_ID", "").strip()
+    primary_user_id = int(primary_user_id_str) if primary_user_id_str else None
+
+    require_mention = os.environ.get("DISCORD_REQUIRE_MENTION", "").strip().lower() in ("true", "1", "yes")
 
     if _task and not _task.done():
         logger.warning("Discord listener already running")
@@ -88,13 +115,22 @@ def start_discord_listener(agent) -> asyncio.Task | None:
 
     @_client.event
     async def on_message(message: discord.Message):
-        # Only process messages in the configured channel
-        if message.channel.id != target_channel_id:
+        # Only process messages in explicitly allowed channels (no auto-inclusion of threads)
+        if message.channel.id not in allowed_channels:
             return
 
-        # Skip messages from bots (including ourselves)
-        if message.author.bot:
+        # Skip our own messages
+        if message.author.id == _client.user.id:
             return
+
+        # When REQUIRE_MENTION: only process when we're @mentioned (humans and bots)
+        # When not: only process human messages (skip bots to avoid loops)
+        if require_mention:
+            if not message.mentions or _client.user not in message.mentions:
+                return
+        else:
+            if message.author.bot:
+                return
 
         content = (message.content or "").strip()
         # Allow messages with only image attachments (no text)
@@ -159,9 +195,22 @@ def start_discord_listener(agent) -> asyncio.Task | None:
         if not content and not image_data_urls:
             return
 
-        username = message.author.display_name or message.author.name or "User"
-        display_content = content or "[Image(s) attached]"
-        logger.info(f"Discord → {username}: {display_content[:120]}")
+        username = message.author.display_name or message.author.name or "Unknown"
+        raw_content = content or "[Image(s) attached]"
+
+        # Group vs private: DM = private (just you), server channel / group DM = group
+        is_group = getattr(message.channel, "type", None) != discord.ChannelType.private
+
+        # Prefix sender for group context so agent knows who said what
+        if is_group:
+            is_primary = primary_user_id is not None and message.author.id == primary_user_id
+            prefix = f"[{username} (you)]: " if is_primary else f"[{username}]: "
+            user_message = prefix + raw_content
+        else:
+            user_message = raw_content
+
+        display_content = user_message if is_group else raw_content
+        logger.info(f"Discord → {display_content[:120]}")
 
         # Show typing indicator while processing
         async with message.channel.typing():
@@ -173,11 +222,11 @@ def start_discord_listener(agent) -> asyncio.Task | None:
                 chat,
                 agent,
                 "main",
-                content or "[Image(s) attached]",
+                user_message,
                 user_display_name=username,
                 current_time=current_time,
                 channel_type="discord",
-                is_group_chat=False,
+                is_group_chat=is_group,
                 image_data_urls=image_data_urls if image_data_urls else None,
             )
 
@@ -207,7 +256,10 @@ def start_discord_listener(agent) -> asyncio.Task | None:
                 await _client.close()
 
     _task = asyncio.create_task(_run_client())
-    logger.info(f"Discord Gateway listener task started (channel {target_channel_id})")
+    logger.info(
+        f"Discord Gateway listener task started "
+        f"(channels={sorted(allowed_channels)}, require_mention={require_mention})"
+    )
     return _task
 
 
