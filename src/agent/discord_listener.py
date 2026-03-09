@@ -1,5 +1,5 @@
 """
-Discord Gateway listener — connects via discord.py WebSocket so the agent appears
+Discord Gateway listener — connects via discord.py WebSocket so Rowan appears
 online and responds immediately to messages in allowed channels.
 
 How it works:
@@ -133,6 +133,9 @@ def start_discord_listener(agent) -> asyncio.Task | None:
                 return
 
         content = (message.content or "").strip()
+        # Strip our own @mention from content when REQUIRE_MENTION (so agent gets clean text)
+        if require_mention and _client.user and f"<@{_client.user.id}>" in content:
+            content = content.replace(f"<@{_client.user.id}>", "").strip()
         # Allow messages with only image attachments (no text)
         image_data_urls: list[str] = []
         for att in message.attachments:
@@ -242,7 +245,7 @@ def start_discord_listener(agent) -> asyncio.Task | None:
             except Exception as e:
                 logger.error(f"Discord send failed: {e}")
 
-        logger.info(f"Discord ← Agent: {response[:120]}")
+        logger.info(f"Discord ← Rowan: {response[:120]}")
 
     async def _run_client():
         try:
